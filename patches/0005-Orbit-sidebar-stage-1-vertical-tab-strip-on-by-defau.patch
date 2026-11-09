@@ -1,7 +1,7 @@
 From 43492ed8a1a39b8891b2b993382c86a8488762e4 Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 21:26:46 +0000
-Subject: [PATCH 5/7] Orbit: sidebar stage 1 (vertical tab strip on by default)
+Subject: [PATCH 5/8] Orbit: sidebar stage 1 (vertical tab strip on by default)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---

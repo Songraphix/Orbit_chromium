@@ -1,7 +1,7 @@
 From ea3efc94259d553232e94b7411f55bc3a41577b6 Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 16:42:27 +0000
-Subject: [PATCH 1/7] Orbit: branding (name, company, bundle id, icons,
+Subject: [PATCH 1/8] Orbit: branding (name, company, bundle id, icons,
  strings)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

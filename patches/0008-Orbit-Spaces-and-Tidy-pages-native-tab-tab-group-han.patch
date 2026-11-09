@@ -1,0 +1,422 @@
+From 530a06adbac18e0bd2825b1c4369130b8106d905 Mon Sep 17 00:00:00 2001
+From: Editor <editor@Dees-Mac-mini.local>
+Date: Mon, 9 Nov 2026 22:36:05 +0000
+Subject: [PATCH 8/8] Orbit: Spaces and Tidy pages, native tab/tab-group
+ handler
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ chrome/browser/resources/orbit_ntp/pages.ts   |  70 +++++-
+ chrome/browser/ui/webui/orbit_ntp/BUILD.gn    |   7 +
+ .../webui/orbit_ntp/orbit_browser_handler.cc  | 211 ++++++++++++++++++
+ .../webui/orbit_ntp/orbit_browser_handler.h   |  35 +++
+ .../ui/webui/orbit_ntp/orbit_ntp_ui.cc        |   2 +
+ 5 files changed, 324 insertions(+), 1 deletion(-)
+ create mode 100644 chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+ create mode 100644 chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+
+diff --git a/chrome/browser/resources/orbit_ntp/pages.ts b/chrome/browser/resources/orbit_ntp/pages.ts
+index 656953e740..a1bd4698d7 100644
+--- a/chrome/browser/resources/orbit_ntp/pages.ts
++++ b/chrome/browser/resources/orbit_ntp/pages.ts
+@@ -12,6 +12,8 @@ function netFetch(url, opts = {}) {
+   }));
+ }
+ 
++const browserCall = (name, ...args) => sendWithPromise(name, ...args);
++
+ 'use strict';
+ 
+ const $ = (id) => document.getElementById(id);
+@@ -43,6 +45,8 @@ const SECTIONS = [
+   { id: 'focus', label: 'Focus', icon: '◎' },
+   { id: 'toolkit', label: 'Toolkit', icon: '⚒' },
+   { id: 'library', label: 'Library', icon: '▥' },
++  { id: 'spaces', label: 'Spaces', icon: '◍' },
++  { id: 'tidy', label: 'Tidy', icon: '❖' },
+   { id: 'assistant', label: 'Assistant', icon: '✦' },
+   { id: 'settings', label: 'Settings', icon: '⚙' },
+ ];
+@@ -370,7 +374,71 @@ function viewAssistant(view) {
+   if (pending) { save('askPending', null); newChat(); send(pending); }
+ }
+ 
+-const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels, focus: viewFocus, toolkit: viewToolkit, library: viewLibrary, settings: viewSettings, assistant: viewAssistant };
++// ---- Spaces: saved sets of tabs that open as a coloured tab group ----
++const SPACE_COLORS = ['blue', 'green', 'purple', 'orange', 'pink', 'cyan', 'red', 'yellow', 'grey'];
++const SPACE_HEX = { blue: '#4285f4', green: '#34a853', purple: '#8b5cf6', orange: '#fb923c', pink: '#ec4899', cyan: '#22d3ee', red: '#ef4444', yellow: '#facc15', grey: '#9ca3af' };
++function viewSpaces(view) {
++  const spaces = load('spaces', []);
++  let selected = spaces[0]?.id ?? null;
++  const left = el('div', { class: 'list' });
++  const right = el('div', { class: 'editor' });
++  const persist = () => save('spaces', spaces);
++  const renderList = () => {
++    const add = el('input', { class: 'field', placeholder: 'New space…' });
++    add.addEventListener('keydown', (e) => { if (e.key === 'Enter' && add.value.trim()) { const sp = { id: uid(), name: add.value.trim(), color: SPACE_COLORS[spaces.length % 8], urls: [] }; spaces.push(sp); selected = sp.id; persist(); renderList(); renderEditor(); } });
++    left.replaceChildren(add, ...spaces.map((sp) => el('div', { class: 'item' + (sp.id === selected ? ' on' : ''), onclick: () => { selected = sp.id; renderList(); renderEditor(); } },
++      el('div', { class: 'row' }, el('span', { class: 'dot', style: `background:${SPACE_HEX[sp.color]}` }), el('span', { class: 't grow' }, sp.name), el('span', { class: 'sub' }, String(sp.urls.length))))));
++  };
++  const renderEditor = () => {
++    const sp = spaces.find((x) => x.id === selected);
++    if (!sp) { right.replaceChildren(el('div', { class: 'sub' }, 'A Space is a set of sites you open together as one coloured tab group.')); return; }
++    const name = el('input', { class: 'field', value: sp.name, style: 'font-size:18px;font-weight:600' });
++    name.addEventListener('input', () => { sp.name = name.value; persist(); renderList(); });
++    const swatches = el('div', { class: 'tools' }, ...SPACE_COLORS.map((c) => el('span', { class: 'sw' + (c === sp.color ? ' on' : ''), style: `background:${SPACE_HEX[c]}`, onclick: () => { sp.color = c; persist(); renderList(); renderEditor(); } })));
++    const addU = el('input', { class: 'field', placeholder: 'Add a site (example.com) and press Enter' });
++    addU.addEventListener('keydown', (e) => { if (e.key === 'Enter' && addU.value.trim()) { let u = addU.value.trim(); if (!/^[a-z]+:\/\//i.test(u)) u = 'https://' + u; sp.urls.push(u); persist(); renderList(); renderEditor(); } });
++    const saveCur = el('button', { class: 'btn', onclick: async () => { const tabs = await browserCall('orbitGetTabs'); for (const t of tabs) if (!t.self && /^https?:/.test(t.url) && !sp.urls.includes(t.url)) sp.urls.push(t.url); persist(); renderList(); renderEditor(); } }, 'Add all open tabs');
++    const open = el('button', { class: 'btn primary', onclick: () => browserCall('orbitOpenTabs', sp.urls, sp.name, sp.color) }, '▶ Open space');
++    right.replaceChildren(name, swatches, el('div', { class: 'tools' }, open, saveCur), ...sp.urls.map((u, i) => el('div', { class: 'row' }, el('span', { class: 'grow' }, u), el('button', { class: 'x', title: 'Remove', onclick: () => { sp.urls.splice(i, 1); persist(); renderList(); renderEditor(); } }, '×'))), addU,
++      el('button', { class: 'btn', style: 'align-self:flex-start;margin-top:12px', onclick: () => { spaces.splice(spaces.indexOf(sp), 1); selected = spaces[0]?.id ?? null; persist(); renderList(); renderEditor(); } }, 'Delete space'));
++  };
++  view.append(el('h2', {}, 'Spaces'), el('div', { class: 'split' }, left, right));
++  renderList(); renderEditor();
++}
++
++// ---- Tidy: the assistant groups your open tabs by topic ----
++function viewTidy(view) {
++  const out = el('div', { class: 'sub', style: 'white-space:pre-wrap' });
++  const list = el('div', { style: 'display:flex;flex-direction:column;gap:6px' });
++  const run = el('button', { class: 'btn primary', style: 'align-self:flex-start' }, '✦ Tidy my tabs');
++  const load_ = async () => {
++    const tabs = (await browserCall('orbitGetTabs')).filter((t) => !t.self && !t.pinned && !t.group);
++    list.replaceChildren(...tabs.map((t) => el('div', { class: 'row' }, el('span', { class: 'grow' }, t.title || t.url), el('span', { class: 'sub' }, (() => { try { return new URL(t.url).hostname; } catch { return ''; } })()))));
++    out.textContent = tabs.length ? `${tabs.length} ungrouped tab${tabs.length === 1 ? '' : 's'}.` : 'No ungrouped tabs to tidy.';
++    return tabs;
++  };
++  run.addEventListener('click', async () => {
++    if (!settings.apiKey) { out.textContent = 'Add your Anthropic API key in Settings first.'; return; }
++    const tabs = await load_();
++    if (tabs.length < 2) return;
++    run.disabled = true; out.textContent = 'Thinking…';
++    try {
++      const prompt = 'Group these browser tabs into a few topical groups (2-6 groups, 2+ tabs each; leave unrelated tabs out). Reply with ONLY JSON: [{"title":"short name","color":"blue|green|purple|orange|pink|cyan|red|yellow","tabs":[index,...]}]. Tabs:\n' + tabs.map((t) => `${t.index}: ${t.title} (${t.url})`).join('\n');
++      const resp = await netFetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: settings.model || 'claude-sonnet-5-5', max_tokens: 1500, messages: [{ role: 'user', content: prompt }] }) });
++      const data = await resp.json();
++      if (!resp.ok) throw new Error(data?.error?.message || `HTTP ${resp.status}`);
++      const text = (data.content || []).map((b) => b.text || '').join('');
++      const groups = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
++      const made = await browserCall('orbitGroupTabs', groups.map((g) => ({ title: String(g.title).slice(0, 40), color: g.color, tabs: (g.tabs || []).filter(Number.isInteger) })));
++      out.textContent = `Created ${made} group${made === 1 ? '' : 's'}.`; await load_();
++    } catch (e) { out.textContent = 'Tidy failed: ' + e.message; }
++    run.disabled = false;
++  });
++  view.append(el('h2', {}, 'Tidy'), el('div', { class: 'sub' }, 'Asks the assistant to sort the ungrouped tabs in this window into tab groups. Pinned tabs are left alone.'), run, out, list);
++  load_();
++}
++
++const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels, focus: viewFocus, toolkit: viewToolkit, library: viewLibrary, settings: viewSettings, assistant: viewAssistant, spaces: viewSpaces, tidy: viewTidy };
+ 
+ function route() {
+   const id = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'projects';
+diff --git a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+index e74b5cd5a2..12116418ee 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
++++ b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+@@ -4,10 +4,12 @@
+ 
+ source_set("orbit_ntp") {
+   sources = [
++    "orbit_browser_handler.cc",
+     "orbit_fetch_handler.cc",
+     "orbit_ntp_ui.cc",
+   ]
+   public = [
++    "orbit_browser_handler.h",
+     "orbit_fetch_handler.h",
+     "orbit_ntp_ui.h",
+   ]
+@@ -20,6 +22,11 @@ source_set("orbit_ntp") {
+     "//chrome/browser/profiles:profile",
+     "//chrome/browser/resources/orbit_ntp:resources",
+     "//chrome/common:constants",
++    "//chrome/browser/ui/tabs:tab_group",
++    "//chrome/browser/ui/webui:webui_util",
++    "//chrome/browser/ui/tabs:tab_strip",
++    "//components/tab_groups",
++    "//components/tabs:public",
+     "//net",
+     "//net/traffic_annotation",
+     "//services/network/public/cpp",
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+new file mode 100644
+index 0000000000..1b0a189513
+--- /dev/null
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+@@ -0,0 +1,211 @@
++// Copyright 2026 Songraphix. Orbit new tab page.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h"
++
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/ui/browser_tabstrip.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/tabs/tab_group_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/webui/webui_embedding_context.h"
++#include "components/tab_groups/tab_group_color.h"
++#include "components/tab_groups/tab_group_id.h"
++#include "components/tab_groups/tab_group_visual_data.h"
++#include "components/tabs/public/tab_group.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_ui.h"
++#include "url/gurl.h"
++
++namespace {
++
++constexpr size_t kMaxTabsPerCall = 100;
++
++tab_groups::TabGroupColorId ColorFromName(std::string_view name) {
++  using tab_groups::TabGroupColorId;
++  if (name == "blue") return TabGroupColorId::kBlue;
++  if (name == "red") return TabGroupColorId::kRed;
++  if (name == "yellow") return TabGroupColorId::kYellow;
++  if (name == "green") return TabGroupColorId::kGreen;
++  if (name == "pink") return TabGroupColorId::kPink;
++  if (name == "purple") return TabGroupColorId::kPurple;
++  if (name == "cyan") return TabGroupColorId::kCyan;
++  if (name == "orange") return TabGroupColorId::kOrange;
++  return TabGroupColorId::kGrey;
++}
++
++// Only web addresses and Orbit's own pages may be opened from a page.
++bool IsOpenableUrl(const GURL& url) {
++  return url.is_valid() && (url.SchemeIs("https") || url.SchemeIs("http") ||
++                            url.SchemeIs("chrome"));
++}
++
++}  // namespace
++
++OrbitBrowserHandler::OrbitBrowserHandler() = default;
++OrbitBrowserHandler::~OrbitBrowserHandler() = default;
++
++void OrbitBrowserHandler::RegisterMessages() {
++  web_ui()->RegisterMessageCallback(
++      "orbitGetTabs", base::BindRepeating(&OrbitBrowserHandler::HandleGetTabs,
++                                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "orbitOpenTabs", base::BindRepeating(&OrbitBrowserHandler::HandleOpenTabs,
++                                           base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "orbitGroupTabs",
++      base::BindRepeating(&OrbitBrowserHandler::HandleGroupTabs,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "orbitFocusTab", base::BindRepeating(&OrbitBrowserHandler::HandleFocusTab,
++                                           base::Unretained(this)));
++}
++
++void OrbitBrowserHandler::HandleGetTabs(const base::ListValue& args) {
++  if (args.empty() || !args[0].is_string()) {
++    return;
++  }
++  AllowJavascript();
++  base::ListValue tabs;
++  BrowserWindowInterface* browser =
++      webui::GetBrowserWindowInterface(web_ui()->GetWebContents());
++  if (browser) {
++    TabStripModel* strip = browser->GetTabStripModel();
++    for (int i = 0; i < strip->count(); ++i) {
++      content::WebContents* contents = strip->GetWebContentsAt(i);
++      base::DictValue tab;
++      tab.Set("index", i);
++      tab.Set("title", base::UTF16ToUTF8(contents->GetTitle()));
++      tab.Set("url", contents->GetVisibleURL().spec());
++      tab.Set("pinned", strip->IsTabPinned(i));
++      tab.Set("self", contents == web_ui()->GetWebContents());
++      std::string group_title;
++      if (auto group = strip->GetTabGroupForTab(i)) {
++        const auto* data =
++            strip->group_model()->GetTabGroup(*group)->visual_data();
++        group_title = base::UTF16ToUTF8(data->title());
++      }
++      tab.Set("group", group_title);
++      tabs.Append(std::move(tab));
++    }
++  }
++  ResolveJavascriptCallback(args[0], tabs);
++}
++
++void OrbitBrowserHandler::HandleOpenTabs(const base::ListValue& args) {
++  if (args.size() < 4 || !args[0].is_string() || !args[1].is_list() ||
++      !args[2].is_string() || !args[3].is_string()) {
++    return;
++  }
++  AllowJavascript();
++  int opened = 0;
++  BrowserWindowInterface* browser =
++      webui::GetBrowserWindowInterface(web_ui()->GetWebContents());
++  if (browser) {
++    TabStripModel* strip = browser->GetTabStripModel();
++    const int first_index = strip->count();
++    for (const base::Value& value : args[1].GetList()) {
++      if (opened >= static_cast<int>(kMaxTabsPerCall) || !value.is_string()) {
++        break;
++      }
++      GURL url(value.GetString());
++      if (!IsOpenableUrl(url)) {
++        continue;
++      }
++      chrome::AddTabAt(browser, url, -1, /*foreground=*/opened == 0);
++      ++opened;
++    }
++    const std::string& title = args[2].GetString();
++    if (opened > 0 && !title.empty()) {
++      std::vector<int> indices;
++      for (int i = first_index; i < first_index + opened; ++i) {
++        indices.push_back(i);
++      }
++      tab_groups::TabGroupId group = strip->AddToNewGroup(indices);
++      strip->group_model()->GetTabGroup(group)->SetVisualData(
++          tab_groups::TabGroupVisualData(base::UTF8ToUTF16(title),
++                                         ColorFromName(args[3].GetString())),
++          /*is_customized=*/true);
++    }
++  }
++  ResolveJavascriptCallback(args[0], base::Value(opened));
++}
++
++void OrbitBrowserHandler::HandleGroupTabs(const base::ListValue& args) {
++  if (args.size() < 2 || !args[0].is_string() || !args[1].is_list()) {
++    return;
++  }
++  AllowJavascript();
++  int made = 0;
++  BrowserWindowInterface* browser =
++      webui::GetBrowserWindowInterface(web_ui()->GetWebContents());
++  if (browser) {
++    TabStripModel* strip = browser->GetTabStripModel();
++    // Grouping moves tabs, so remember each tab by its contents, not index.
++    std::vector<content::WebContents*> by_index;
++    for (int i = 0; i < strip->count(); ++i) {
++      by_index.push_back(strip->GetWebContentsAt(i));
++    }
++    for (const base::Value& entry : args[1].GetList()) {
++      if (!entry.is_dict()) {
++        continue;
++      }
++      const base::DictValue& dict = entry.GetDict();
++      const std::string* title = dict.FindString("title");
++      const std::string* color = dict.FindString("color");
++      const base::ListValue* wanted = dict.FindList("tabs");
++      if (!title || !wanted) {
++        continue;
++      }
++      std::vector<content::WebContents*> members;
++      for (const base::Value& idx : *wanted) {
++        if (idx.is_int() && idx.GetInt() >= 0 &&
++            idx.GetInt() < static_cast<int>(by_index.size())) {
++          members.push_back(by_index[idx.GetInt()]);
++        }
++      }
++      std::vector<int> indices;
++      for (content::WebContents* contents : members) {
++        int now = strip->GetIndexOfWebContents(contents);
++        if (now >= 0 && !strip->IsTabPinned(now) &&
++            contents != web_ui()->GetWebContents()) {
++          indices.push_back(now);
++        }
++      }
++      if (indices.empty()) {
++        continue;
++      }
++      tab_groups::TabGroupId group = strip->AddToNewGroup(indices);
++      strip->group_model()->GetTabGroup(group)->SetVisualData(
++          tab_groups::TabGroupVisualData(
++              base::UTF8ToUTF16(*title),
++              ColorFromName(color ? *color : std::string())),
++          /*is_customized=*/true);
++      ++made;
++    }
++  }
++  ResolveJavascriptCallback(args[0], base::Value(made));
++}
++
++void OrbitBrowserHandler::HandleFocusTab(const base::ListValue& args) {
++  if (args.empty() || !args[0].is_int()) {
++    return;
++  }
++  BrowserWindowInterface* browser =
++      webui::GetBrowserWindowInterface(web_ui()->GetWebContents());
++  if (!browser) {
++    return;
++  }
++  TabStripModel* strip = browser->GetTabStripModel();
++  int index = args[0].GetInt();
++  if (index >= 0 && index < strip->count()) {
++    strip->ActivateTabAt(index);
++  }
++}
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+new file mode 100644
+index 0000000000..671f1c964c
+--- /dev/null
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+@@ -0,0 +1,35 @@
++// Copyright 2026 Songraphix. Orbit new tab page.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_ORBIT_NTP_ORBIT_BROWSER_HANDLER_H_
++#define CHROME_BROWSER_UI_WEBUI_ORBIT_NTP_ORBIT_BROWSER_HANDLER_H_
++
++#include "base/values.h"
++#include "content/public/browser/web_ui_message_handler.h"
++
++// Gives Orbit's pages (Spaces, Tidy) controlled access to the window they are
++// open in: list its tabs, open a set of URLs as a tab group, and group
++// existing tabs.
++class OrbitBrowserHandler : public content::WebUIMessageHandler {
++ public:
++  OrbitBrowserHandler();
++  OrbitBrowserHandler(const OrbitBrowserHandler&) = delete;
++  OrbitBrowserHandler& operator=(const OrbitBrowserHandler&) = delete;
++  ~OrbitBrowserHandler() override;
++
++  // content::WebUIMessageHandler:
++  void RegisterMessages() override;
++
++ private:
++  // [callbackId] -> [{index, title, url, pinned, group, self}]
++  void HandleGetTabs(const base::ListValue& args);
++  // [callbackId, urls[], groupTitle, color] -> number of tabs opened
++  void HandleOpenTabs(const base::ListValue& args);
++  // [callbackId, [{title, color, tabs: [index...]}]] -> number of groups made
++  void HandleGroupTabs(const base::ListValue& args);
++  // [index] -> activates the tab
++  void HandleFocusTab(const base::ListValue& args);
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_ORBIT_NTP_ORBIT_BROWSER_HANDLER_H_
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.cc b/chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.cc
+index 1fd5f4462e..bb40afe586 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.cc
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.cc
+@@ -5,6 +5,7 @@
+ #include "chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.h"
+ 
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h"
+ #include "chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.h"
+ #include "chrome/grit/orbit_ntp_resources.h"
+ #include "chrome/grit/orbit_ntp_resources_map.h"
+@@ -20,6 +21,7 @@ OrbitNtpUI::OrbitNtpUI(content::WebUI* web_ui)
+   webui::SetupWebUIDataSource(source, kOrbitNtpResources,
+                               IDR_ORBIT_NTP_ORBIT_NTP_HTML);
+   web_ui->AddMessageHandler(std::make_unique<OrbitFetchHandler>());
++  web_ui->AddMessageHandler(std::make_unique<OrbitBrowserHandler>());
+   // The wallpaper and font are embedded as data: URIs in orbit_assets.css.
+   source->OverrideContentSecurityPolicy(
+       network::mojom::CSPDirectiveName::ImgSrc,
+-- 
+2.54.0 (Apple Git-157)
+

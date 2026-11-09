@@ -69,3 +69,9 @@
 - Verified: weather renders live data; assistant reaches Anthropic and returns 401 for a fake key (real key not tested).
 - Streaming dropped (non-streaming only).
 - Debug lessons: attach CDP only via --remote-debugging-port=0 + DevToolsActivePort; a crashed browser looks like a hung evaluate; check ~/Library/Logs/DiagnosticReports/Orbit*.ips.
+
+## Phase 5b — Spaces + Tidy (done)
+- OrbitBrowserHandler (chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.*): orbitGetTabs, orbitOpenTabs(urls,title,color -> new coloured tab group), orbitGroupTabs(groups by tab index; resolves by WebContents so indices shifting is safe), orbitFocusTab. Uses webui::GetBrowserWindowInterface, TabStripModel::AddToNewGroup, TabGroup::SetVisualData. Only http/https/chrome URLs; max 100 tabs per call.
+- Spaces page (pages.html#spaces): saved sets of sites (name, colour, URLs; "Add all open tabs"; "Open space" opens them as a tab group). Spaces = tab groups by design decision (no per-space profiles/logins).
+- Tidy page (#tidy): sends ungrouped tab titles/URLs to the assistant, which returns groups; handler creates them. Needs API key. Tidy's AI call was NOT tested end to end (no key); the grouping handler was tested via Spaces.
+- Verified via CDP: Open space opened 3 tabs and grouped them; Tidy then lists 0 ungrouped.

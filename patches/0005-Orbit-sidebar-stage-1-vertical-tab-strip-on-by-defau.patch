@@ -1,0 +1,27 @@
+From 43492ed8a1a39b8891b2b993382c86a8488762e4 Mon Sep 17 00:00:00 2001
+From: Editor <editor@Dees-Mac-mini.local>
+Date: Mon, 9 Nov 2026 21:26:46 +0000
+Subject: [PATCH 5/5] Orbit: sidebar stage 1 (vertical tab strip on by default)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ chrome/browser/ui/tabs/tab_strip_prefs.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/browser/ui/tabs/tab_strip_prefs.cc b/chrome/browser/ui/tabs/tab_strip_prefs.cc
+index 9a855747c2..50d8f33268 100644
+--- a/chrome/browser/ui/tabs/tab_strip_prefs.cc
++++ b/chrome/browser/ui/tabs/tab_strip_prefs.cc
+@@ -25,7 +25,8 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(prefs::kOrganizerPanelPinnedToTabstrip, true);
+   registry->RegisterBooleanPref(prefs::kEverythingMenuPinnedToTabstrip, true);
+   registry->RegisterBooleanPref(prefs::kTabScrollButtonsPinnedToTabstrip, true);
+-  registry->RegisterBooleanPref(prefs::kVerticalTabsEnabled, false);
++  // Orbit: the sidebar (vertical tab strip) is on by default.
++  registry->RegisterBooleanPref(prefs::kVerticalTabsEnabled, true);
+   registry->RegisterBooleanPref(prefs::kVerticalTabsExpandOnHoverEnabled, true);
+   registry->RegisterBooleanPref(prefs::kVerticalTabsEnabledFirstTime, false);
+   registry->RegisterBooleanPref(prefs::kVerticalTabsCollapsedState, false);
+-- 
+2.54.0 (Apple Git-157)
+

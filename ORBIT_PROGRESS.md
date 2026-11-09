@@ -49,3 +49,9 @@
 - Tested through CDP on a private instance (--remote-debugging-port=0): all four views + cross-page data. Screenshot checked for Projects only; Notes/Tasks/Easels were verified by script, not visually.
 - Not ported: Orbit's Archive, Library, assistant, boosts, clipboard, focus sounds, toolkit pages (need backends).
 - Next: Phase 5 (sidebar/rail/toolbar), stage 1: vertical sidebar hosted as WebUI in the browser frame.
+
+## Phase 5 — Native UI, stage 1: sidebar (done)
+- Finding: Chromium 159 ships a native vertical tab strip (chrome/browser/ui/views/tabs/vertical, VerticalTabStripRegionView, state controller, blur backdrop, expand-on-hover, pinned tabs, tab groups). It was only gated by pref vertical_tabs.enabled (default false). No flag needed.
+- Change: chrome/browser/ui/tabs/tab_strip_prefs.cc default kVerticalTabsEnabled=true. Verified on a fresh profile: left sidebar with traffic lights, tab list, "+" button, address bar on top.
+- Revised estimate: the "weeks" estimate was for building a tab strip from scratch; reusing this one makes the sidebar mostly restyle work.
+- Still NOT done (stage 2+): Orbit glass styling of the sidebar (translucent vibrancy, rounded islands, 10px insets, 16px radius), app rail with favorites grid, Spaces (icon/name/theme per space), folders (map to tab groups), space switcher bottom bar, Tidy/Clear, toolbar styling (domain/title display), right-hand dock (Notes etc. as side panel or links to pages.html), wallpaper behind chrome.

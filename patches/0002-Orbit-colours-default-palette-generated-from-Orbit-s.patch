@@ -1,0 +1,75 @@
+From 97431d15c87aa222dad388492daf9a4cdc9226fe Mon Sep 17 00:00:00 2001
+From: Editor <editor@Dees-Mac-mini.local>
+Date: Mon, 9 Nov 2026 16:44:43 +0000
+Subject: [PATCH 2/2] Orbit: colours (default palette generated from Orbit
+ sea-glass seed)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ ui/color/ref_color_mixer.cc | 42 ++++++++++++++++++++-----------------
+ 1 file changed, 23 insertions(+), 19 deletions(-)
+
+diff --git a/ui/color/ref_color_mixer.cc b/ui/color/ref_color_mixer.cc
+index c94d55ee63..b972de98be 100644
+--- a/ui/color/ref_color_mixer.cc
++++ b/ui/color/ref_color_mixer.cc
+@@ -293,33 +293,37 @@ void AddGeneratedPalette(ColorProvider* provider,
+   mixer[kColorRefNeutralVariant100] = {palette->neutral_variant().get(100)};
+ }
+ 
++// Orbit: the seed colour (sea glass, the default Space theme's first colour)
++// that the default browser palette is generated from, replacing Chromium's
++// fixed blue baseline.
++constexpr SkColor kOrbitSeedColor = SkColorSetRGB(0x2F, 0x6B, 0x70);
++
+ void AddRefColorMixer(ColorProvider* provider, const ColorProviderKey& key) {
+-  // Typically user_color should always be set when the source has been set to
+-  // kAccent, however there may still be cases when this can occur (e.g. failing
+-  // to retrieve the system accent color on Windows).
+-  // TODO(tluk): Investigate guaranteeing the user_color is defined when kAccent
+-  // is set.
+-  if (!key.user_color.has_value() ||
+-      key.user_color_source == ColorProviderKey::UserColorSource::kBaseline ||
+-      key.user_color_source == ColorProviderKey::UserColorSource::kGrayscale) {
++  // Grayscale themes (e.g. incognito) keep the neutral baseline palette.
++  if (key.user_color_source == ColorProviderKey::UserColorSource::kGrayscale) {
+     AddBaselinePalette(provider, key.color_mode);
+-  } else {
+-    // The default value for schemes is Tonal Spot.
+-    auto variant = key.scheme_variant.value_or(
+-        ColorProviderKey::SchemeVariant::kTonalSpot);
++    return;
++  }
+ 
++  // The default value for schemes is Tonal Spot.
++  auto variant =
++      key.scheme_variant.value_or(ColorProviderKey::SchemeVariant::kTonalSpot);
++
++  // Orbit: with no user-chosen colour, generate the palette from Orbit's seed
++  // instead of using the stock blue baseline.
++  SkColor user_color = kOrbitSeedColor;
++  if (key.user_color.has_value() &&
++      key.user_color_source == ColorProviderKey::UserColorSource::kAccent) {
++    user_color = key.user_color.value();
+     // If the user color is set to black libmonet will default to a pink primary
+-    // color. This results in an unexpected user experience where all other
+-    // shades of gray result in the default blue primary color. To avoid this
+-    // edge case set the user_color one step above black to ensure the primary
+-    // blue is used, see crbug.com/1457314.
+-    SkColor user_color = key.user_color.value();
++    // color. To avoid this edge case set the user_color one step above black
++    // to ensure the primary blue is used, see crbug.com/1457314.
+     if (user_color == SK_ColorBLACK) {
+       user_color = SkColorSetRGB(0x01, 0x01, 0x01);
+     }
+-
+-    AddGeneratedPalette(provider, user_color, variant);
+   }
++
++  AddGeneratedPalette(provider, user_color, variant);
+ }
+ 
+ }  // namespace ui
+-- 
+2.54.0 (Apple Git-157)
+

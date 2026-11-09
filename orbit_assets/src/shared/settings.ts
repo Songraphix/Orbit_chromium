@@ -1,0 +1,212 @@
+import { z } from 'zod';
+import { wallpaperChoiceSchema } from './types/newtab';
+import { DEFAULT_HOME, homeSettingsSchema } from './types/home';
+import { DEFAULT_FOCUS_PREFS, focusPrefsSchema, focusSessionSchema } from './focus';
+import { DEFAULT_VOLUME } from './sounds';
+import { DEFAULT_UI_PREFS, uiPrefsSchema } from './ui-prefs';
+import { homeLayoutSchema } from './home-widgets';
+import { DEFAULT_LOOK, lookSchema, ROTATIONS } from './backgrounds';
+import { aiPrefsSchema, DEFAULT_AI_PREFS } from './ai';
+import { rulesSchema } from './rules';
+import { DEFAULT_VOICE_PREFS, voicePrefsSchema } from './voice';
+import { NOTES_WIDTH, rectSchema, SIDEBAR_WIDTH } from './types/layout';
+
+/**
+ * Every persisted setting, with its schema and default. Stored as JSON in the `settings` table.
+ * A stored value that no longer matches its schema falls back to the default.
+ */
+export const settingsSchema = {
+  /** Last normal (non-maximised) window bounds, plus whether it was maximised. */
+  'window.state': z.object({
+    bounds: z
+      .object({
+        x: z.number().int(),
+        y: z.number().int(),
+        width: z.number().int().positive(),
+        height: z.number().int().positive(),
+      })
+      .nullable(),
+    isMaximized: z.boolean(),
+  }),
+  'sidebar.width': z.number().int().min(SIDEBAR_WIDTH.min).max(SIDEBAR_WIDTH.max),
+  'sidebar.visible': z.boolean(),
+  'newtab.wallpaper': wallpaperChoiceSchema,
+  /** Background adjustments (brief M4): brightness, blur, saturation, contrast, overlay… */
+  'newtab.look': lookSchema,
+  /** Favourite backgrounds (rotation picks from these). */
+  'newtab.favorites': z.array(wallpaperChoiceSchema).max(30),
+  'newtab.rotation': z.enum(ROTATIONS),
+  /** The new tab page's theme, tagline and widgets. */
+  'newtab.home': homeSettingsSchema,
+  /** The Homepage's widgets (brief M3); null until you change them (then the old switches). */
+  'home.layout': homeLayoutSchema.nullable(),
+  /** A Space's own Homepage layout, when it has one (brief M9); else the one above. */
+  'home.spaceLayouts': z.record(z.string(), homeLayoutSchema),
+  /** The space the main window shows. */
+  'window.activeSpace': z.string().nullable(),
+  /** Today tabs not opened for this long are archived (F-20). */
+  'archive.after': z.enum(['12h', '24h', '7d', '30d', 'never']),
+  /** Each Space's split view, kept across restarts (roadmap P2.4). */
+  'tabs.splits': z.record(
+    z.string(),
+    z.object({ ids: z.tuple([z.string(), z.string()]), ratio: z.number().min(0.2).max(0.8) }),
+  ),
+  /** The customization engine (brief M2): features shown, density, text size, accent, surfaces,
+   *  motion. */
+  ui: uiPrefsSchema,
+  /** Light or dark for the whole app (and pages that offer both), or follow the Mac. */
+  appearance: z.enum(['system', 'light', 'dark']),
+  /** Where tabs go: the sidebar (Arc) or a strip across the top (owner request). */
+  'tabs.layout': z.enum(['sidebar', 'top']),
+  /** Suggest grouping a crowded Today into folders (never moves tabs by itself). */
+  'tabs.groupSuggestions': z.boolean(),
+  /** Live pages beyond this many are put to sleep, least recently used first (F-25). */
+  'tabs.maxLive': z.number().int().min(1).max(50),
+  /** Pages not viewed for this many minutes are put to sleep. 0 = only the maxLive limit. */
+  'tabs.sleepAfterMinutes': z
+    .number()
+    .int()
+    .min(0)
+    .max(24 * 60),
+  /** Links from pinned tabs and favorites to other sites open in a Peek preview (F-23). */
+  'peek.enabled': z.boolean(),
+  /** Whose links Peek: any tab's, or only pinned tabs' and favorites' (Arc's default). */
+  'peek.scope': z.enum(['all', 'pinned']),
+  /** ⌥⌘N opens an empty Little Orbit from any app (F-24). */
+  'little.globalShortcut': z.boolean(),
+  /** A playing video pops out into a small floating window when you switch away from its tab. */
+  'media.autoPopout': z.boolean(),
+  /** Floating notes (F-33) open when Orbit quit, reopened at launch. */
+  'notes.floating': z
+    .array(z.object({ id: z.string(), bounds: rectSchema, onTop: z.boolean() }))
+    .max(50),
+  /** The productivity panel: open or not, and where (`panel/projects/<id>`…), for a restart. */
+  'panel.state': z.object({ open: z.boolean(), route: z.string().max(120) }),
+  /** PDFs opened from this Mac: their random orbit-pdf:// tokens (roadmap R2 M4). */
+  'pdf.local': z
+    .array(z.object({ token: z.string(), path: z.string(), name: z.string() }))
+    .max(300),
+  /** Each PDF's Orbit notes (its address → the note's id). */
+  'pdf.notes': z.record(z.string(), z.string()),
+  /** Voice (push-to-talk): run what you say at once, read answers aloud, which voice. */
+  'voice.prefs': voicePrefsSchema,
+  /** Wallpaper palettes already read (UI spec §4), newest last, by background (and file date). */
+  'canvas.palettes': z
+    .array(
+      z.object({
+        key: z.string().max(400),
+        palette: z.object({
+          swatches: z
+            .array(z.object({ hex: z.string().regex(/^#[0-9a-f]{6}$/i), weight: z.number() }))
+            .max(16),
+          average: z.string().regex(/^#[0-9a-f]{6}$/i),
+        }),
+      }),
+    )
+    .max(16),
+  /** A pinned app's panel beside the rail (UI 3): its width as last dragged. */
+  'appdock.width': z.number().int().min(NOTES_WIDTH.min).max(NOTES_WIDTH.max),
+  /** …pinned beside the page (it makes room), or floating over it (unpinned, the default, like
+   *  Opera's sidebar). */
+  'appdock.pinned': z.boolean(),
+  /** The right-hand dock's width, as last dragged (Notes and docked apps share it). */
+  'dock.width': z.number().int().min(NOTES_WIDTH.min).max(NOTES_WIDTH.max),
+  /** Clipboard history (the panel's Clipboard tab): off until you switch it on. */
+  'clipboard.capture': z.boolean(),
+  /** The focus session under way (roadmap P2.3), kept across a restart. */
+  'focus.session': focusSessionSchema.nullable(),
+  /** How you like to focus: length, break, blocking, sound (kept between sessions). */
+  'focus.prefs': focusPrefsSchema,
+  /** The sounds' volume (0–1). */
+  'sounds.volume': z.number().min(0).max(1),
+  /** Orbit Capture's last project, the default next time (null = Unsorted). */
+  'capture.lastProject': z.string().nullable(),
+  /** AI (roadmap P3.7): on or off, the model, a monthly limit, attaching the page. */
+  'ai.prefs': aiPrefsSchema,
+  /** The Toolkit's picked colours (roadmap P3.5), newest first. */
+  'toolkit.colors': z.array(z.string().max(32)).max(16),
+  /** Your rules (roadmap P4.4): where links from other apps go; a Space's own archive time. */
+  rules: rulesSchema,
+  /** Automatic backups (roadmap P4.7): a folder you chose and how many to keep (null = off). */
+  'backup.auto': z
+    .object({ folder: z.string().max(1024), keep: z.number().int().min(1).max(60) })
+    .nullable(),
+  /** When the last backup was written (automatic or by hand). */
+  'backup.last': z.number().nullable(),
+  /** Search engine URL with %s for the query. */
+  'search.engine': z.enum(['google', 'duckduckgo', 'bing', 'kagi', 'ecosia']),
+} as const;
+
+export type Settings = { [K in SettingKey]: z.output<(typeof settingsSchema)[K]> };
+export type SettingKey = keyof typeof settingsSchema;
+
+export const settingsDefaults: Settings = {
+  'window.state': { bounds: null, isMaximized: false },
+  'sidebar.width': SIDEBAR_WIDTH.default,
+  'sidebar.visible': true,
+  'newtab.wallpaper': { kind: 'builtin', id: 'misty-sunrise' },
+  'newtab.look': DEFAULT_LOOK,
+  'newtab.favorites': [],
+  'newtab.rotation': 'off',
+  'newtab.home': DEFAULT_HOME,
+  'home.layout': null,
+  'home.spaceLayouts': {},
+  'window.activeSpace': null,
+  'archive.after': '12h',
+  appearance: 'system',
+  ui: DEFAULT_UI_PREFS,
+  'tabs.layout': 'sidebar',
+  'tabs.groupSuggestions': true,
+  'tabs.splits': {},
+  'tabs.maxLive': 8,
+  'tabs.sleepAfterMinutes': 30,
+  'search.engine': 'google',
+  'peek.enabled': true,
+  'peek.scope': 'all',
+  'little.globalShortcut': true,
+  'media.autoPopout': true,
+  'notes.floating': [],
+  'panel.state': { open: false, route: 'panel' },
+  'dock.width': NOTES_WIDTH.panel,
+  'clipboard.capture': false,
+  'canvas.palettes': [],
+  'appdock.width': 360,
+  'appdock.pinned': false,
+  'voice.prefs': DEFAULT_VOICE_PREFS,
+  'pdf.local': [],
+  'pdf.notes': {},
+  'capture.lastProject': null,
+  'focus.session': null,
+  'focus.prefs': DEFAULT_FOCUS_PREFS,
+  'sounds.volume': DEFAULT_VOLUME,
+  'ai.prefs': DEFAULT_AI_PREFS,
+  'toolkit.colors': [],
+  rules: [],
+  'backup.auto': null,
+  'backup.last': null,
+};
+
+/** Query URL templates for `search.engine`. */
+export const SEARCH_ENGINES: Record<Settings['search.engine'], { name: string; url: string }> = {
+  google: { name: 'Google', url: 'https://www.google.com/search?q=%s' },
+  duckduckgo: { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s' },
+  bing: { name: 'Bing', url: 'https://www.bing.com/search?q=%s' },
+  kagi: { name: 'Kagi', url: 'https://kagi.com/search?q=%s' },
+  ecosia: { name: 'Ecosia', url: 'https://www.ecosia.org/search?q=%s' },
+};
+
+/** The settings the Settings page edits. */
+export const userSettingsSchema = z.object({
+  archiveAfter: settingsSchema['archive.after'],
+  maxLive: settingsSchema['tabs.maxLive'],
+  tabLayout: settingsSchema['tabs.layout'],
+  appearance: settingsSchema.appearance,
+  sleepAfterMinutes: settingsSchema['tabs.sleepAfterMinutes'],
+  searchEngine: settingsSchema['search.engine'],
+  peek: settingsSchema['peek.enabled'],
+  peekScope: settingsSchema['peek.scope'],
+  littleShortcut: settingsSchema['little.globalShortcut'],
+  autoPopout: settingsSchema['media.autoPopout'],
+  groupSuggestions: settingsSchema['tabs.groupSuggestions'],
+});
+export type UserSettings = z.output<typeof userSettingsSchema>;

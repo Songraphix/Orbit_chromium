@@ -55,3 +55,9 @@
 - Change: chrome/browser/ui/tabs/tab_strip_prefs.cc default kVerticalTabsEnabled=true. Verified on a fresh profile: left sidebar with traffic lights, tab list, "+" button, address bar on top.
 - Revised estimate: the "weeks" estimate was for building a tab strip from scratch; reusing this one makes the sidebar mostly restyle work.
 - Still NOT done (stage 2+): Orbit glass styling of the sidebar (translucent vibrancy, rounded islands, 10px insets, 16px radius), app rail with favorites grid, Spaces (icon/name/theme per space), folders (map to tab groups), space switcher bottom bar, Tidy/Clear, toolbar styling (domain/title display), right-hand dock (Notes etc. as side panel or links to pages.html), wallpaper behind chrome.
+
+## Phase 4b — more pages (done)
+- pages.html#focus (25/5/15 timer, session stats, WebAudio rain/brown/white noise), #toolkit (JSON, Base64, URL, timestamp, UUID, hex->RGB), #library (Orbit content counts + links to chrome://downloads|history|bookmarks), #settings (name, search engine google/ddg/bing/brave, 24h clock, 4 wallpapers, erase data).
+- New tab page reads settings: name, 24h, engine (fixes the "always Google" gap), wallpaper (3 extra wallpapers embedded in wallpapers.css ~1MB).
+- Tested via CDP on a private instance: all pass (focus tick, sound button, JSON format, settings -> NTP greeting + wallpaper). Not visually screenshotted.
+- Archive = link to chrome://history (no Orbit-style archive: needs native closed-tab data).

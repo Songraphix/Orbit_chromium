@@ -1,7 +1,7 @@
 From 97431d15c87aa222dad388492daf9a4cdc9226fe Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 16:44:43 +0000
-Subject: [PATCH 02/10] Orbit: colours (default palette generated from Orbit
+Subject: [PATCH 02/11] Orbit: colours (default palette generated from Orbit
  sea-glass seed)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

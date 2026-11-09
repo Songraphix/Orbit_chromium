@@ -90,3 +90,14 @@
 - Settings: Export/Import my data (JSON of all orbit.* localStorage except settings, so API key is never exported).
 - New tab search box = command palette: matches Orbit pages, open tabs (switch via orbitFocusTab), Spaces, plus web search fallback.
 - Verified via CDP: archive lists a closed tab; clipboard page captured; export/import buttons present; palette shows Notes for "note". File download/import round-trip NOT tested.
+
+## Phase 5e — split view + voice button (done, partly verified)
+- orbitSplit handler -> chrome::NewSplitTab (Chromium's native split view). Palette lists "Split view: <tab>" for each open tab. Verified: a split pane (split new-tab UI) appears. Guard added because Chromium CHECK-crashes when an already-split (or pinned) tab is split again; re-test after guard: no crash.
+- Mic button on the new tab search box uses webkitSpeechRecognition (API object exists). NOT verified: actual recognition needs a speech service/permission; plain Chromium often lacks Google's speech key, so it may show "Voice failed: network/not-allowed". Orbit's local whisper voice and wake word are NOT ported.
+
+## Not built (blocked or out of scope for WebUI-level work)
+- Glass/vibrancy frame, floating rounded islands, wallpaper behind the frame, app rail / favorites grid (native Views/Cocoa work; sidebar = Chromium's vertical tabs).
+- Peek (floating link preview), Little Orbit (small window for external links), site-controls popover, sidebar media player, downloads shelf (Chromium's own UI is used for media/downloads).
+- Cloud sync (Firebase) and Drive: need user's Firebase/Google OAuth config; export/import JSON backup instead.
+- Arc importer: dropped (one-off).
+- Easels have no image/web-capture or text boxes; Notes are plain text (no rich editor/markdown); Library has no Media section.

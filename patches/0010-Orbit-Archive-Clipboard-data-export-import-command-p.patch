@@ -1,7 +1,7 @@
 From 70bbf4afbf7beb8433f4c555982f3fdaf0211ba3 Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 22:45:20 +0000
-Subject: [PATCH 10/10] Orbit: Archive, Clipboard, data export/import, command
+Subject: [PATCH 10/11] Orbit: Archive, Clipboard, data export/import, command
  palette on new tab
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

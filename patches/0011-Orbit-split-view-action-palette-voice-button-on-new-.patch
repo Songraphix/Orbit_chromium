@@ -1,0 +1,156 @@
+From 6d46ec301488dcd779883cf46abce608671f25d2 Mon Sep 17 00:00:00 2001
+From: Editor <editor@Dees-Mac-mini.local>
+Date: Mon, 9 Nov 2026 22:50:01 +0000
+Subject: [PATCH 11/11] Orbit: split view action (palette), voice button on new
+ tab search
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../browser/resources/orbit_ntp/orbit_ntp.ts  | 18 +++++++-
+ chrome/browser/ui/webui/orbit_ntp/BUILD.gn    |  2 +
+ .../webui/orbit_ntp/orbit_browser_handler.cc  | 41 +++++++++++++++++++
+ .../webui/orbit_ntp/orbit_browser_handler.h   |  2 +
+ 4 files changed, 62 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/browser/resources/orbit_ntp/orbit_ntp.ts b/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
+index 9acf999fd2..ddf9eb6812 100644
+--- a/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
++++ b/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
+@@ -79,6 +79,22 @@ $('search').addEventListener('submit', (e) => {
+ });
+ 
+ 
++// ---- Voice input: the mic button uses the browser's speech recognition ----
++{
++  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
++  const mic = el('button', { type: 'button', class: 'x', title: SR ? 'Speak' : 'Speech recognition is not available', style: 'font-size:18px' }, '🎙');
++  $('search').append(mic);
++  mic.addEventListener('click', () => {
++    if (!SR) { $('q').placeholder = 'Speech recognition is not available in this build.'; return; }
++    const r = new SR(); r.lang = navigator.language || 'en-US'; r.interimResults = true;
++    mic.style.color = '#ef4444';
++    r.onresult = (e) => { $('q').value = [...e.results].map((x) => x[0].transcript).join(''); };
++    r.onerror = (e) => { $('q').placeholder = 'Voice failed: ' + e.error; mic.style.color = ''; };
++    r.onend = () => { mic.style.color = ''; if ($('q').value.trim()) $('search').requestSubmit(); };
++    try { r.start(); } catch (e) { mic.style.color = ''; }
++  });
++}
++
+ // ---- Command palette: type in the search box to jump to Orbit pages, open tabs, Spaces ----
+ {
+   const box = $('search');
+@@ -94,7 +110,7 @@ $('search').addEventListener('submit', (e) => {
+     if (!q || q.startsWith('?')) { panel.style.display = 'none'; return; }
+     const hits = [];
+     for (const [name, id] of PAGES) if (name.toLowerCase().includes(q)) hits.push(row_(name, 'Orbit', () => { location.href = 'pages.html#' + id; }));
+-    for (const t of tabs) if (!t.self && (t.title + ' ' + t.url).toLowerCase().includes(q)) hits.push(row_(t.title || t.url, 'Switch to tab', () => sendWithPromise('orbitFocusTab', t.index)));
++    for (const t of tabs) if (!t.self && (t.title + ' ' + t.url).toLowerCase().includes(q)) { hits.push(row_(t.title || t.url, 'Switch to tab', () => sendWithPromise('orbitFocusTab', t.index))); hits.push(row_('Split view: ' + (t.title || t.url), 'Side by side', () => sendWithPromise('orbitSplit', t.index, 'side'))); }
+     for (const sp of load('spaces', [])) if (sp.name.toLowerCase().includes(q)) hits.push(row_(sp.name, 'Open space', () => sendWithPromise('orbitOpenTabs', sp.urls, sp.name, sp.color)));
+     const shown = hits.slice(0, 7);
+     shown.push(row_(`Search the web for "${$('q').value.trim()}"`, 'Enter', () => go($('q').value)));
+diff --git a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+index 5deac7cc54..cb0262e08f 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
++++ b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+@@ -23,6 +23,8 @@ source_set("orbit_ntp") {
+     "//chrome/browser/resources/orbit_ntp:resources",
+     "//chrome/common:constants",
+     "//chrome/browser/sessions",
++    "//chrome/browser/ui:browser_commands",
++    "//components/split_tabs",
+     "//chrome/browser/ui/orbit:boosts",
+     "//components/sessions",
+     "//chrome/browser/ui/tabs:tab_group",
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+index 78f37de98c..0e03daa5c7 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+@@ -13,9 +13,11 @@
+ #include "base/strings/utf_string_conversions.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/sessions/tab_restore_service_factory.h"
++#include "chrome/browser/ui/browser_commands.h"
+ #include "chrome/browser/ui/browser_tabstrip.h"
+ #include "chrome/browser/ui/orbit/orbit_boosts_tab_helper.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/tabs/split_tab_metrics.h"
+ #include "chrome/browser/ui/tabs/tab_group_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/webui/webui_embedding_context.h"
+@@ -23,10 +25,12 @@
+ #include "components/sessions/core/tab_restore_service.h"
+ #include "components/sessions/core/tab_restore_types.h"
+ #include "components/prefs/scoped_user_pref_update.h"
++#include "components/split_tabs/split_tab_visual_data.h"
+ #include "components/tab_groups/tab_group_color.h"
+ #include "components/tab_groups/tab_group_id.h"
+ #include "components/tab_groups/tab_group_visual_data.h"
+ #include "components/tabs/public/tab_group.h"
++#include "components/tabs/public/tab_interface.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_ui.h"
+ #include "url/gurl.h"
+@@ -70,6 +74,9 @@ void OrbitBrowserHandler::RegisterMessages() {
+       "orbitGroupTabs",
+       base::BindRepeating(&OrbitBrowserHandler::HandleGroupTabs,
+                           base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "orbitSplit", base::BindRepeating(&OrbitBrowserHandler::HandleSplit,
++                                        base::Unretained(this)));
+   web_ui()->RegisterMessageCallback(
+       "orbitClosedTabs",
+       base::BindRepeating(&OrbitBrowserHandler::HandleClosedTabs,
+@@ -293,3 +300,37 @@ void OrbitBrowserHandler::HandleClosedTabs(const base::ListValue& args) {
+   }
+   ResolveJavascriptCallback(args[0], result);
+ }
++
++void OrbitBrowserHandler::HandleSplit(const base::ListValue& args) {
++  if (args.size() < 3 || !args[0].is_string() || !args[1].is_int() ||
++      !args[2].is_string()) {
++    return;
++  }
++  AllowJavascript();
++  bool ok = false;
++  BrowserWindowInterface* browser =
++      webui::GetBrowserWindowInterface(web_ui()->GetWebContents());
++  if (browser) {
++    TabStripModel* strip = browser->GetTabStripModel();
++    int index = args[1].GetInt();
++    if (index >= 0 && index < strip->count()) {
++      // Make that tab the active one; the browser's split view then pairs it
++      // with a new tab beside (or above) it.
++      strip->ActivateTabAt(index);
++      // Chromium CHECK-fails when a split tab is split again, and pinned tabs
++      // cannot be split, so only split a plain, un-split tab.
++      tabs::TabInterface* active = browser->GetActiveTabInterface();
++      if (!active || active->IsSplit() || strip->IsTabPinned(index)) {
++        ResolveJavascriptCallback(args[0], base::Value(false));
++        return;
++      }
++      chrome::NewSplitTab(browser,
++                          args[2].GetString() == "stacked"
++                              ? split_tabs::SplitTabLayout::kStacked
++                              : split_tabs::SplitTabLayout::kSideBySide,
++                          split_tabs::SplitTabCreatedSource::kToolbarButton);
++      ok = true;
++    }
++  }
++  ResolveJavascriptCallback(args[0], base::Value(ok));
++}
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+index c10156941c..ea2289fe12 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+@@ -28,6 +28,8 @@ class OrbitBrowserHandler : public content::WebUIMessageHandler {
+   void HandleOpenTabs(const base::ListValue& args);
+   // [callbackId, [{title, color, tabs: [index...]}]] -> number of groups made
+   void HandleGroupTabs(const base::ListValue& args);
++  // [callbackId, index, "side"|"stacked"] -> splits that tab with a new one
++  void HandleSplit(const base::ListValue& args);
+   // [callbackId] -> [{title, url, closedMs}] recently closed tabs
+   void HandleClosedTabs(const base::ListValue& args);
+   // [callbackId] -> { host: {css, js, enabled, ...} }
+-- 
+2.54.0 (Apple Git-157)
+

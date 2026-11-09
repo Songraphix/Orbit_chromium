@@ -75,3 +75,11 @@
 - Spaces page (pages.html#spaces): saved sets of sites (name, colour, URLs; "Add all open tabs"; "Open space" opens them as a tab group). Spaces = tab groups by design decision (no per-space profiles/logins).
 - Tidy page (#tidy): sends ungrouped tab titles/URLs to the assistant, which returns groups; handler creates them. Needs API key. Tidy's AI call was NOT tested end to end (no key); the grouping handler was tested via Spaces.
 - Verified via CDP: Open space opened 3 tabs and grouped them; Tidy then lists 0 ungrouped.
+
+## Phase 5c — Boosts (done)
+- chrome/browser/ui/orbit/orbit_boosts_tab_helper.*: WebContentsUserData helper created in TabFeatures::Init (tab_features.cc). On DOMContentLoaded of the primary main frame of an http(s) page, looks up the host (also www. variants) in profile dict pref "orbit.boosts" and runs, in an isolated world, a constructable stylesheet (CSP-proof) + the user's JS via new Function. Not applied in incognito.
+- Pref "orbit.boosts" registered in tab_strip_prefs.cc. OrbitBrowserHandler: orbitGetBoosts, orbitSetBoost (host validated, [callbackId, host, dict]).
+- Boosts page (pages.html#boosts): pick an open site or type a host; hide elements (selectors), font, dark mode (invert), custom CSS, custom JS, enable toggle.
+- Verified on a local http page: CSS applied (red heading), zap hid .ad, JS set an attribute.
+- Limits: JS runs in an isolated world (can touch DOM, not page variables); strict-CSP eval behaviour untested; no "zap picker" (click an element to hide it), no per-boost colour picker like Orbit's.
+- Lint gotcha: chrome.send and cr.js are lint-restricted in WebUI TS; use sendWithPromise with a line-level eslint-disable, and handlers must take callbackId as args[0].

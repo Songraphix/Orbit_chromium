@@ -1,0 +1,407 @@
+From 65d452b65e7c44244fba5275423afe8d8d2cbf1c Mon Sep 17 00:00:00 2001
+From: Editor <editor@Dees-Mac-mini.local>
+Date: Mon, 9 Nov 2026 22:41:57 +0000
+Subject: [PATCH 9/9] Orbit: Boosts (per-site CSS/JS) tab helper + editor page
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ chrome/browser/resources/orbit_ntp/pages.ts   | 47 +++++++++-
+ chrome/browser/ui/orbit/BUILD.gn              | 18 ++++
+ .../ui/orbit/orbit_boosts_tab_helper.cc       | 91 +++++++++++++++++++
+ .../ui/orbit/orbit_boosts_tab_helper.h        | 39 ++++++++
+ chrome/browser/ui/tabs/BUILD.gn               |  1 +
+ chrome/browser/ui/tabs/tab_features.cc        |  4 +
+ chrome/browser/ui/tabs/tab_strip_prefs.cc     |  2 +
+ chrome/browser/ui/webui/orbit_ntp/BUILD.gn    |  2 +
+ .../webui/orbit_ntp/orbit_browser_handler.cc  | 44 +++++++++
+ .../webui/orbit_ntp/orbit_browser_handler.h   |  4 +
+ 10 files changed, 251 insertions(+), 1 deletion(-)
+ create mode 100644 chrome/browser/ui/orbit/BUILD.gn
+ create mode 100644 chrome/browser/ui/orbit/orbit_boosts_tab_helper.cc
+ create mode 100644 chrome/browser/ui/orbit/orbit_boosts_tab_helper.h
+
+diff --git a/chrome/browser/resources/orbit_ntp/pages.ts b/chrome/browser/resources/orbit_ntp/pages.ts
+index a1bd4698d7..4b0e013f1f 100644
+--- a/chrome/browser/resources/orbit_ntp/pages.ts
++++ b/chrome/browser/resources/orbit_ntp/pages.ts
+@@ -46,6 +46,7 @@ const SECTIONS = [
+   { id: 'toolkit', label: 'Toolkit', icon: '⚒' },
+   { id: 'library', label: 'Library', icon: '▥' },
+   { id: 'spaces', label: 'Spaces', icon: '◍' },
++  { id: 'boosts', label: 'Boosts', icon: '⚡' },
+   { id: 'tidy', label: 'Tidy', icon: '❖' },
+   { id: 'assistant', label: 'Assistant', icon: '✦' },
+   { id: 'settings', label: 'Settings', icon: '⚙' },
+@@ -438,7 +439,51 @@ function viewTidy(view) {
+   load_();
+ }
+ 
+-const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels, focus: viewFocus, toolkit: viewToolkit, library: viewLibrary, settings: viewSettings, assistant: viewAssistant, spaces: viewSpaces, tidy: viewTidy };
++// ---- Boosts: per-site CSS and JS, applied by the browser when the site loads ----
++const BOOST_FONTS = [['', 'Site default'], ['system-ui', 'System'], ['Georgia, serif', 'Serif'], ['ui-monospace, Menlo, monospace', 'Monospace'], ['Comfortaa, system-ui', 'Comfortaa']];
++function buildBoostCss(b) {
++  let css = '';
++  const zap = (b.zap || '').split('\n').map((x) => x.trim()).filter(Boolean);
++  if (zap.length) css += `${zap.join(',\n')} { display: none !important; }\n`;
++  if (b.font) css += `html, body, body * { font-family: ${b.font} !important; }\n`;
++  if (b.dark) css += 'html { filter: invert(1) hue-rotate(180deg) !important; background: #fff; }\nimg, video, picture, canvas, svg image { filter: invert(1) hue-rotate(180deg) !important; }\n';
++  if (b.customCss) css += b.customCss + '\n';
++  return css;
++}
++async function viewBoosts(view) {
++  const boosts = (await browserCall('orbitGetBoosts')) || {};
++  const tabs = await browserCall('orbitGetTabs');
++  const openHosts = [...new Set(tabs.filter((t) => /^https?:/.test(t.url)).map((t) => { try { return new URL(t.url).hostname.replace(/^www\./, ''); } catch { return ''; } }).filter(Boolean))];
++  let selected = Object.keys(boosts)[0] ?? null;
++  const left = el('div', { class: 'list' });
++  const right = el('div', { class: 'editor' });
++  const save_ = (host) => browserCall('orbitSetBoost', host, boosts[host] ?? {});
++  const renderList = () => {
++    const add = el('input', { class: 'field', placeholder: 'Boost a site (example.com)…' });
++    const create = (h) => { h = h.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, ''); if (!h || boosts[h]) { selected = h || selected; renderList(); renderEditor(); return; } boosts[h] = { enabled: true, css: '', js: '' }; selected = h; save_(h); renderList(); renderEditor(); };
++    add.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(add.value); });
++    left.replaceChildren(add, ...(openHosts.length ? [el('div', { class: 'sub' }, 'Open in this window')] : []), ...openHosts.map((h) => el('button', { class: 'btn', onclick: () => create(h) }, '+ ' + h)),
++      el('div', { class: 'sub', style: 'margin-top:8px' }, 'Your boosts'), ...Object.keys(boosts).map((h) => el('div', { class: 'item' + (h === selected ? ' on' : ''), onclick: () => { selected = h; renderList(); renderEditor(); } },
++        el('div', { class: 'row' }, el('span', { class: 't grow' }, h), el('span', { class: 'sub' }, boosts[h].enabled === false ? 'off' : 'on')))));
++  };
++  const renderEditor = () => {
++    const h = selected; const b = boosts[h];
++    if (!b) { right.replaceChildren(el('div', { class: 'sub' }, 'A Boost changes how one site looks or behaves: hide elements, change the font, force dark mode, or add your own CSS and JavaScript. It applies whenever you open that site.')); return; }
++    const commit = () => { b.css = buildBoostCss(b); save_(h); renderList(); };
++    const on = el('input', { type: 'checkbox' }); on.checked = b.enabled !== false; on.addEventListener('change', () => { b.enabled = on.checked; commit(); });
++    const zap = el('textarea', { class: 'field', placeholder: 'Hide elements: one CSS selector per line (e.g. .cookie-banner)', style: 'min-height:70px' }); zap.value = b.zap || ''; zap.addEventListener('input', () => { b.zap = zap.value; commit(); });
++    const font = el('select', { class: 'field' }, ...BOOST_FONTS.map(([v, l]) => el('option', { value: v }, l))); font.value = b.font || ''; font.addEventListener('change', () => { b.font = font.value; commit(); });
++    const dark = el('input', { type: 'checkbox' }); dark.checked = !!b.dark; dark.addEventListener('change', () => { b.dark = dark.checked; commit(); });
++    const css = el('textarea', { class: 'field', placeholder: 'Custom CSS', style: 'min-height:90px;font-family:ui-monospace,Menlo,monospace;font-size:12px' }); css.value = b.customCss || ''; css.addEventListener('input', () => { b.customCss = css.value; commit(); });
++    const js = el('textarea', { class: 'field', placeholder: 'Custom JavaScript (runs after the page loads, like an extension script)', style: 'min-height:90px;font-family:ui-monospace,Menlo,monospace;font-size:12px' }); js.value = b.js || ''; js.addEventListener('input', () => { b.js = js.value; commit(); });
++    right.replaceChildren(el('h2', {}, h), el('label', { class: 'row' }, on, 'Enabled'), el('div', { class: 'sub' }, 'Hide elements'), zap, el('div', { class: 'row' }, el('span', { class: 'sub' }, 'Font'), font), el('label', { class: 'row' }, dark, 'Dark mode (inverts colours)'), el('div', { class: 'sub' }, 'Custom CSS'), css, el('div', { class: 'sub' }, 'Custom JavaScript'), js,
++      el('div', { class: 'sub' }, 'Reload the site to see changes.'), el('button', { class: 'btn', style: 'align-self:flex-start', onclick: () => { delete boosts[h]; browserCall('orbitSetBoost', h, {}); selected = Object.keys(boosts)[0] ?? null; renderList(); renderEditor(); } }, 'Delete boost'));
++  };
++  view.append(el('h2', {}, 'Boosts'), el('div', { class: 'split' }, left, right));
++  renderList(); renderEditor();
++}
++
++const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels, focus: viewFocus, toolkit: viewToolkit, library: viewLibrary, settings: viewSettings, assistant: viewAssistant, spaces: viewSpaces, tidy: viewTidy, boosts: viewBoosts };
+ 
+ function route() {
+   const id = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'projects';
+diff --git a/chrome/browser/ui/orbit/BUILD.gn b/chrome/browser/ui/orbit/BUILD.gn
+new file mode 100644
+index 0000000000..b2fb0f9b79
+--- /dev/null
++++ b/chrome/browser/ui/orbit/BUILD.gn
+@@ -0,0 +1,18 @@
++# Copyright 2026 Songraphix. Orbit Boosts.
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++source_set("boosts") {
++  sources = [
++    "orbit_boosts_tab_helper.cc",
++    "orbit_boosts_tab_helper.h",
++  ]
++  deps = [
++    "//base",
++    "//chrome/browser/profiles:profile",
++    "//components/prefs",
++    "//content/public/browser",
++    "//content/public/common",
++    "//url",
++  ]
++}
+diff --git a/chrome/browser/ui/orbit/orbit_boosts_tab_helper.cc b/chrome/browser/ui/orbit/orbit_boosts_tab_helper.cc
+new file mode 100644
+index 0000000000..de29d2ee82
+--- /dev/null
++++ b/chrome/browser/ui/orbit/orbit_boosts_tab_helper.cc
+@@ -0,0 +1,91 @@
++// Copyright 2026 Songraphix. Orbit Boosts.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/orbit/orbit_boosts_tab_helper.h"
++
++#include <string>
++
++#include "base/json/json_writer.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/values.h"
++#include "chrome/browser/profiles/profile.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/common/isolated_world_ids.h"
++#include "url/gurl.h"
++
++namespace orbit {
++
++namespace {
++
++// An isolated world of our own, next to Chrome's internal ones.
++constexpr int32_t kBoostsWorldId = content::ISOLATED_WORLD_ID_CONTENT_END + 5;
++
++std::string JsonString(const std::string& value) {
++  return base::WriteJson(base::Value(value)).value_or("\"\"");
++}
++
++}  // namespace
++
++WEB_CONTENTS_USER_DATA_KEY_IMPL(BoostsTabHelper);
++
++BoostsTabHelper::BoostsTabHelper(content::WebContents* web_contents)
++    : content::WebContentsObserver(web_contents),
++      content::WebContentsUserData<BoostsTabHelper>(*web_contents) {}
++
++BoostsTabHelper::~BoostsTabHelper() = default;
++
++void BoostsTabHelper::DOMContentLoaded(
++    content::RenderFrameHost* render_frame_host) {
++  if (!render_frame_host->IsInPrimaryMainFrame()) {
++    return;
++  }
++  const GURL& url = render_frame_host->GetLastCommittedURL();
++  if (!url.SchemeIs("http") && !url.SchemeIs("https")) {
++    return;
++  }
++  Profile* profile =
++      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
++  if (!profile || profile->IsOffTheRecord()) {
++    return;
++  }
++  const base::DictValue& boosts = profile->GetPrefs()->GetDict(kBoostsPref);
++  if (boosts.empty()) {
++    return;
++  }
++
++  std::string host(url.host());
++  const base::DictValue* boost = boosts.FindDict(host);
++  if (!boost && base::StartsWith(host, "www.")) {
++    boost = boosts.FindDict(host.substr(4));
++  }
++  if (!boost && !base::StartsWith(host, "www.")) {
++    boost = boosts.FindDict("www." + host);
++  }
++  if (!boost || !boost->FindBool("enabled").value_or(true)) {
++    return;
++  }
++
++  std::string script;
++  if (const std::string* css = boost->FindString("css"); css && !css->empty()) {
++    script += "try{const s=new CSSStyleSheet();s.replaceSync(" +
++              JsonString(*css) +
++              ");document.adoptedStyleSheets=[...document.adoptedStyleSheets,"
++              "s];}catch(e){console.error('Orbit boost CSS:',e);}\n";
++  }
++  if (const std::string* js = boost->FindString("js"); js && !js->empty()) {
++    // Run the user's code through Function so a syntax error is contained.
++    script += "try{new Function(" + JsonString(*js) +
++              ")();}catch(e){console.error('Orbit boost JS:',e);}\n";
++  }
++  if (script.empty()) {
++    return;
++  }
++  render_frame_host->ExecuteJavaScriptInIsolatedWorld(
++      base::UTF8ToUTF16(script), base::NullCallback(), kBoostsWorldId);
++}
++
++}  // namespace orbit
+diff --git a/chrome/browser/ui/orbit/orbit_boosts_tab_helper.h b/chrome/browser/ui/orbit/orbit_boosts_tab_helper.h
+new file mode 100644
+index 0000000000..482ecc40a5
+--- /dev/null
++++ b/chrome/browser/ui/orbit/orbit_boosts_tab_helper.h
+@@ -0,0 +1,39 @@
++// Copyright 2026 Songraphix. Orbit Boosts.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_ORBIT_ORBIT_BOOSTS_TAB_HELPER_H_
++#define CHROME_BROWSER_UI_ORBIT_ORBIT_BOOSTS_TAB_HELPER_H_
++
++#include "content/public/browser/web_contents_observer.h"
++#include "content/public/browser/web_contents_user_data.h"
++
++namespace orbit {
++
++// Profile pref (dictionary): host -> { css: string, js: string, enabled: bool,
++// ...editor fields }. Edited on Orbit's Boosts page.
++inline constexpr char kBoostsPref[] = "orbit.boosts";
++
++// Orbit Boosts: when a page for a boosted site finishes parsing, injects the
++// site's saved CSS (as a constructable stylesheet, so page CSP does not block
++// it) and JS (in an isolated world, like an extension content script).
++class BoostsTabHelper : public content::WebContentsObserver,
++                        public content::WebContentsUserData<BoostsTabHelper> {
++ public:
++  BoostsTabHelper(const BoostsTabHelper&) = delete;
++  BoostsTabHelper& operator=(const BoostsTabHelper&) = delete;
++  ~BoostsTabHelper() override;
++
++  // content::WebContentsObserver:
++  void DOMContentLoaded(content::RenderFrameHost* render_frame_host) override;
++
++ private:
++  friend class content::WebContentsUserData<BoostsTabHelper>;
++  explicit BoostsTabHelper(content::WebContents* web_contents);
++
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++};
++
++}  // namespace orbit
++
++#endif  // CHROME_BROWSER_UI_ORBIT_ORBIT_BOOSTS_TAB_HELPER_H_
+diff --git a/chrome/browser/ui/tabs/BUILD.gn b/chrome/browser/ui/tabs/BUILD.gn
+index 1b6d2d60c6..60a6bf4d66 100644
+--- a/chrome/browser/ui/tabs/BUILD.gn
++++ b/chrome/browser/ui/tabs/BUILD.gn
+@@ -537,6 +537,7 @@ if (!is_android) {
+     }
+ 
+     deps = [
++      "//chrome/browser/ui/orbit:boosts",
+       ":tab_group",
+       ":tab_model",
+       ":tab_strip",
+diff --git a/chrome/browser/ui/tabs/tab_features.cc b/chrome/browser/ui/tabs/tab_features.cc
+index e1856fe291..86b726f3ed 100644
+--- a/chrome/browser/ui/tabs/tab_features.cc
++++ b/chrome/browser/ui/tabs/tab_features.cc
+@@ -53,6 +53,7 @@
+ #include "chrome/browser/glic/suggestions/glic_cue_tab_state.h"
+ #include "chrome/browser/glic/suggestions/glic_cue_target.h"
+ #include "chrome/browser/history/history_tab_helper.h"
++#include "chrome/browser/ui/orbit/orbit_boosts_tab_helper.h"
+ #include "chrome/browser/history/top_sites_factory.h"
+ #include "chrome/browser/history_clusters/history_clusters_tab_helper.h"
+ #include "chrome/browser/image_fetcher/image_fetcher_service_factory.h"
+@@ -438,6 +439,9 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
+ 
+   zoom::ZoomController::CreateForWebContents(tab.GetContents());
+ 
++  // Orbit: per-site CSS/JS (Boosts).
++  orbit::BoostsTabHelper::CreateForWebContents(tab.GetContents());
++
+   infobars::ContentInfoBarManager::CreateForWebContents(tab.GetContents());
+ 
+   autofill::AutofillClientProvider& autofill_client_provider =
+diff --git a/chrome/browser/ui/tabs/tab_strip_prefs.cc b/chrome/browser/ui/tabs/tab_strip_prefs.cc
+index 50d8f33268..75b45b4c46 100644
+--- a/chrome/browser/ui/tabs/tab_strip_prefs.cc
++++ b/chrome/browser/ui/tabs/tab_strip_prefs.cc
+@@ -25,6 +25,8 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(prefs::kOrganizerPanelPinnedToTabstrip, true);
+   registry->RegisterBooleanPref(prefs::kEverythingMenuPinnedToTabstrip, true);
+   registry->RegisterBooleanPref(prefs::kTabScrollButtonsPinnedToTabstrip, true);
++  // Orbit: per-site CSS/JS (Boosts), edited on the Boosts page.
++  registry->RegisterDictionaryPref("orbit.boosts");
+   // Orbit: the sidebar (vertical tab strip) is on by default.
+   registry->RegisterBooleanPref(prefs::kVerticalTabsEnabled, true);
+   registry->RegisterBooleanPref(prefs::kVerticalTabsExpandOnHoverEnabled, true);
+diff --git a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+index 12116418ee..5b3fcac442 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
++++ b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+@@ -22,11 +22,13 @@ source_set("orbit_ntp") {
+     "//chrome/browser/profiles:profile",
+     "//chrome/browser/resources/orbit_ntp:resources",
+     "//chrome/common:constants",
++    "//chrome/browser/ui/orbit:boosts",
+     "//chrome/browser/ui/tabs:tab_group",
+     "//chrome/browser/ui/webui:webui_util",
+     "//chrome/browser/ui/tabs:tab_strip",
+     "//components/tab_groups",
+     "//components/tabs:public",
++    "//components/prefs",
+     "//net",
+     "//net/traffic_annotation",
+     "//services/network/public/cpp",
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+index 1b0a189513..862efffffa 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+@@ -11,11 +11,15 @@
+ 
+ #include "base/functional/bind.h"
+ #include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/browser_tabstrip.h"
++#include "chrome/browser/ui/orbit/orbit_boosts_tab_helper.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/tabs/tab_group_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/webui/webui_embedding_context.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
+ #include "components/tab_groups/tab_group_color.h"
+ #include "components/tab_groups/tab_group_id.h"
+ #include "components/tab_groups/tab_group_visual_data.h"
+@@ -63,6 +67,13 @@ void OrbitBrowserHandler::RegisterMessages() {
+       "orbitGroupTabs",
+       base::BindRepeating(&OrbitBrowserHandler::HandleGroupTabs,
+                           base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "orbitGetBoosts",
++      base::BindRepeating(&OrbitBrowserHandler::HandleGetBoosts,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "orbitSetBoost", base::BindRepeating(&OrbitBrowserHandler::HandleSetBoost,
++                                           base::Unretained(this)));
+   web_ui()->RegisterMessageCallback(
+       "orbitFocusTab", base::BindRepeating(&OrbitBrowserHandler::HandleFocusTab,
+                                            base::Unretained(this)));
+@@ -209,3 +220,36 @@ void OrbitBrowserHandler::HandleFocusTab(const base::ListValue& args) {
+     strip->ActivateTabAt(index);
+   }
+ }
++
++void OrbitBrowserHandler::HandleGetBoosts(const base::ListValue& args) {
++  if (args.empty() || !args[0].is_string()) {
++    return;
++  }
++  AllowJavascript();
++  Profile* profile = Profile::FromWebUI(web_ui());
++  ResolveJavascriptCallback(
++      args[0], profile->GetPrefs()->GetDict(orbit::kBoostsPref).Clone());
++}
++
++void OrbitBrowserHandler::HandleSetBoost(const base::ListValue& args) {
++  if (args.size() < 3 || !args[0].is_string() || !args[1].is_string() ||
++      !args[2].is_dict()) {
++    return;
++  }
++  AllowJavascript();
++  const std::string& host = args[1].GetString();
++  // Hosts only: no scheme, path or spaces.
++  if (host.empty() || host.size() > 253 ||
++      host.find_first_of("/: \t") != std::string::npos) {
++    ResolveJavascriptCallback(args[0], base::Value(false));
++    return;
++  }
++  Profile* profile = Profile::FromWebUI(web_ui());
++  ScopedDictPrefUpdate update(profile->GetPrefs(), orbit::kBoostsPref);
++  if (args[2].GetDict().empty()) {
++    update->Remove(host);
++  } else {
++    update->Set(host, args[2].GetDict().Clone());
++  }
++  ResolveJavascriptCallback(args[0], base::Value(true));
++}
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+index 671f1c964c..6c228a01f9 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+@@ -28,6 +28,10 @@ class OrbitBrowserHandler : public content::WebUIMessageHandler {
+   void HandleOpenTabs(const base::ListValue& args);
+   // [callbackId, [{title, color, tabs: [index...]}]] -> number of groups made
+   void HandleGroupTabs(const base::ListValue& args);
++  // [callbackId] -> { host: {css, js, enabled, ...} }
++  void HandleGetBoosts(const base::ListValue& args);
++  // [callbackId, host, boost dict] -> saves (an empty dict removes it)
++  void HandleSetBoost(const base::ListValue& args);
+   // [index] -> activates the tab
+   void HandleFocusTab(const base::ListValue& args);
+ };
+-- 
+2.54.0 (Apple Git-157)
+

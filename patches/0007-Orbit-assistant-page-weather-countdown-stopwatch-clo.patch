@@ -1,7 +1,7 @@
 From ad09a7418019c2ac20c1c423e72b15e13b6478ae Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 22:32:36 +0000
-Subject: [PATCH 7/8] Orbit: assistant page, weather/countdown/stopwatch/clocks
+Subject: [PATCH 7/9] Orbit: assistant page, weather/countdown/stopwatch/clocks
  widgets, browser-side fetch handler (allowlisted hosts)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

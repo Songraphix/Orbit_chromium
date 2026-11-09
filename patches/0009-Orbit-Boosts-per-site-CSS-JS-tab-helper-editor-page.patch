@@ -1,7 +1,8 @@
 From 65d452b65e7c44244fba5275423afe8d8d2cbf1c Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 22:41:57 +0000
-Subject: [PATCH 9/9] Orbit: Boosts (per-site CSS/JS) tab helper + editor page
+Subject: [PATCH 09/10] Orbit: Boosts (per-site CSS/JS) tab helper + editor
+ page
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---

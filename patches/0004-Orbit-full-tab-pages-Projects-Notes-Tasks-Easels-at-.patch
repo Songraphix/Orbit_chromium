@@ -1,8 +1,8 @@
 From 70edbc3ec7730cc6b66ec532645d2d16e7f618af Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 21:23:59 +0000
-Subject: [PATCH 4/9] Orbit: full-tab pages (Projects, Notes, Tasks, Easels) at
- chrome://orbit-newtab/pages.html
+Subject: [PATCH 04/10] Orbit: full-tab pages (Projects, Notes, Tasks, Easels)
+ at chrome://orbit-newtab/pages.html
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---

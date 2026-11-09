@@ -1,0 +1,265 @@
+From 70bbf4afbf7beb8433f4c555982f3fdaf0211ba3 Mon Sep 17 00:00:00 2001
+From: Editor <editor@Dees-Mac-mini.local>
+Date: Mon, 9 Nov 2026 22:45:20 +0000
+Subject: [PATCH 10/10] Orbit: Archive, Clipboard, data export/import, command
+ palette on new tab
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../browser/resources/orbit_ntp/orbit_ntp.ts  | 28 ++++++++++
+ chrome/browser/resources/orbit_ntp/pages.ts   | 53 +++++++++++++++++-
+ chrome/browser/ui/webui/orbit_ntp/BUILD.gn    |  2 +
+ .../webui/orbit_ntp/orbit_browser_handler.cc  | 56 ++++++++++++++++---
+ .../webui/orbit_ntp/orbit_browser_handler.h   |  4 +-
+ 5 files changed, 132 insertions(+), 11 deletions(-)
+
+diff --git a/chrome/browser/resources/orbit_ntp/orbit_ntp.ts b/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
+index a6c123f537..9acf999fd2 100644
+--- a/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
++++ b/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
+@@ -78,6 +78,34 @@ $('search').addEventListener('submit', (e) => {
+   go(v);
+ });
+ 
++
++// ---- Command palette: type in the search box to jump to Orbit pages, open tabs, Spaces ----
++{
++  const box = $('search');
++  const panel = el('div', { class: 'glass', style: 'position:absolute;left:0;right:0;top:64px;border-radius:18px;padding:6px;display:none;flex-direction:column;gap:2px;z-index:10;text-align:left' });
++  box.style.position = 'relative';
++  box.append(panel);
++  const PAGES = [['Projects', 'projects'], ['Notes', 'notes'], ['Tasks', 'tasks'], ['Easels', 'easels'], ['Focus', 'focus'], ['Toolkit', 'toolkit'], ['Library', 'library'], ['Settings', 'settings'], ['Assistant', 'assistant'], ['Spaces', 'spaces'], ['Boosts', 'boosts'], ['Archive', 'archive'], ['Clipboard', 'clipboard'], ['Tidy', 'tidy']];
++  let tabs = [];
++  sendWithPromise('orbitGetTabs').then((t) => { tabs = t; }).catch(() => {});
++  const row_ = (label, sub, action) => el('div', { class: 'row', style: 'padding:9px 12px;border-radius:12px;cursor:pointer', onmousedown: (e) => { e.preventDefault(); action(); } }, el('span', { class: 'grow' }, label), el('span', { class: 'sub' }, sub));
++  const update = () => {
++    const q = $('q').value.trim().toLowerCase();
++    if (!q || q.startsWith('?')) { panel.style.display = 'none'; return; }
++    const hits = [];
++    for (const [name, id] of PAGES) if (name.toLowerCase().includes(q)) hits.push(row_(name, 'Orbit', () => { location.href = 'pages.html#' + id; }));
++    for (const t of tabs) if (!t.self && (t.title + ' ' + t.url).toLowerCase().includes(q)) hits.push(row_(t.title || t.url, 'Switch to tab', () => sendWithPromise('orbitFocusTab', t.index)));
++    for (const sp of load('spaces', [])) if (sp.name.toLowerCase().includes(q)) hits.push(row_(sp.name, 'Open space', () => sendWithPromise('orbitOpenTabs', sp.urls, sp.name, sp.color)));
++    const shown = hits.slice(0, 7);
++    shown.push(row_(`Search the web for "${$('q').value.trim()}"`, 'Enter', () => go($('q').value)));
++    panel.replaceChildren(...shown);
++    panel.style.display = 'flex';
++  };
++  $('q').addEventListener('input', update);
++  $('q').addEventListener('blur', () => { panel.style.display = 'none'; });
++  $('q').addEventListener('focus', () => sendWithPromise('orbitGetTabs').then((t) => { tabs = t; }).catch(() => {}));
++}
++
+ // ---- Widgets ----
+ const WIDGETS = {};
+ const widgets = $('widgets');
+diff --git a/chrome/browser/resources/orbit_ntp/pages.ts b/chrome/browser/resources/orbit_ntp/pages.ts
+index 4b0e013f1f..96b9462517 100644
+--- a/chrome/browser/resources/orbit_ntp/pages.ts
++++ b/chrome/browser/resources/orbit_ntp/pages.ts
+@@ -47,6 +47,8 @@ const SECTIONS = [
+   { id: 'library', label: 'Library', icon: '▥' },
+   { id: 'spaces', label: 'Spaces', icon: '◍' },
+   { id: 'boosts', label: 'Boosts', icon: '⚡' },
++  { id: 'archive', label: 'Archive', icon: '▣' },
++  { id: 'clipboard', label: 'Clipboard', icon: '⎘' },
+   { id: 'tidy', label: 'Tidy', icon: '❖' },
+   { id: 'assistant', label: 'Assistant', icon: '✦' },
+   { id: 'settings', label: 'Settings', icon: '⚙' },
+@@ -322,7 +324,14 @@ function viewSettings(view) {
+   });
+   const ALL = [['projects', 'Projects'], ['palette', 'Palette'], ['notes', 'Notes'], ['focus', 'Focus timer'], ['today', 'Today'], ['quote', 'Quote'], ['weather', 'Weather'], ['countdown', 'Countdown'], ['stopwatch', 'Stopwatch'], ['clocks', 'World clocks'], ['ask', 'Ask Orbit']];
+   const widgetBox = el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' }, ...ALL.map(([k, l]) => { const cb = el('input', { type: 'checkbox' }); cb.checked = settings.widgets.includes(k); cb.addEventListener('change', () => { settings.widgets = ALL.map(([x]) => x).filter((x) => (x === k ? cb.checked : settings.widgets.includes(x))); persist(); }); return el('label', { class: 'btn', style: 'display:flex;gap:6px;align-items:center' }, cb, l); }));
+-  view.append(el('h2', {}, 'Settings'), row('Anthropic API key', keyI), row('Model', select('model', [['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-opus-5-5', 'Opus 5.5'], ['claude-haiku-5-5', 'Haiku 5.5']])), row('City (press Enter)', cityI), cityOut, el('div', { class: 'sub', style: 'margin-top:8px' }, 'New tab widgets'), widgetBox, row('Name', nameI), row('Search engine', select('engine', [['google', 'Google'], ['duckduckgo', 'DuckDuckGo'], ['bing', 'Bing'], ['brave', 'Brave Search']])), row('24-hour clock', hour), el('div', { class: 'sub', style: 'margin-top:8px' }, 'Wallpaper'), wp, el('div', { style: 'flex:1' }), reset);
++  const exportBtn = el('button', { class: 'btn', onclick: () => {
++    const data = {}; for (const k of Object.keys(localStorage)) if (k.startsWith('orbit.') && k !== 'orbit.settings') data[k] = localStorage.getItem(k);
++    const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify({ orbit: 1, data }, null, 2)], { type: 'application/json' })), download: 'orbit-backup.json' }); a.click();
++  } }, 'Export my data');
++  const importIn = el('input', { type: 'file', accept: 'application/json', style: 'display:none' });
++  importIn.addEventListener('change', async () => { try { const j = JSON.parse(await importIn.files[0].text()); if (!j.orbit || !j.data) throw new Error('Not an Orbit backup'); for (const [k, v] of Object.entries(j.data)) if (k.startsWith('orbit.') && k !== 'orbit.settings') localStorage.setItem(k, v); alert('Imported. Reloading.'); location.reload(); } catch (e) { alert('Import failed: ' + e.message); } });
++  const importBtn = el('button', { class: 'btn', onclick: () => importIn.click() }, 'Import data');
++  view.append(el('h2', {}, 'Settings'), row('Backup (notes, tasks, projects, easels, spaces, boosts…)', el('div', { class: 'tools' }, exportBtn, importBtn, importIn)), row('Anthropic API key', keyI), row('Model', select('model', [['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-opus-5-5', 'Opus 5.5'], ['claude-haiku-5-5', 'Haiku 5.5']])), row('City (press Enter)', cityI), cityOut, el('div', { class: 'sub', style: 'margin-top:8px' }, 'New tab widgets'), widgetBox, row('Name', nameI), row('Search engine', select('engine', [['google', 'Google'], ['duckduckgo', 'DuckDuckGo'], ['bing', 'Bing'], ['brave', 'Brave Search']])), row('24-hour clock', hour), el('div', { class: 'sub', style: 'margin-top:8px' }, 'Wallpaper'), wp, el('div', { style: 'flex:1' }), reset);
+ }
+ 
+ // ---- Assistant (Anthropic API, key from Settings; requests go through the browser) ----
+@@ -483,7 +492,47 @@ async function viewBoosts(view) {
+   renderList(); renderEditor();
+ }
+ 
+-const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels, focus: viewFocus, toolkit: viewToolkit, library: viewLibrary, settings: viewSettings, assistant: viewAssistant, spaces: viewSpaces, tidy: viewTidy, boosts: viewBoosts };
++// ---- Archive: recently closed tabs (browser keeps the last ~25) with search ----
++async function viewArchive(view) {
++  const closed = (await browserCall('orbitClosedTabs')) || [];
++  const q = el('input', { class: 'field', placeholder: 'Search closed tabs' });
++  const list = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
++  const render = () => {
++    const needle = q.value.toLowerCase();
++    const shown = closed.filter((t) => (t.title + ' ' + t.url).toLowerCase().includes(needle));
++    list.replaceChildren(...(shown.length ? shown.map((t) => el('div', { class: 'item row', onclick: () => browserCall('orbitOpenTabs', [t.url], '', 'grey') },
++      el('div', { class: 'grow' }, el('div', { class: 't' }, t.title || t.url), el('div', { class: 's' }, t.url)), el('span', { class: 'sub' }, t.closedMs ? new Date(t.closedMs).toLocaleString() : ''))) : [el('div', { class: 'sub' }, closed.length ? 'No matches.' : 'No recently closed tabs. Older pages are in History.')]));
++  };
++  q.addEventListener('input', render);
++  view.append(el('h2', {}, 'Archive', el('span', { class: 'sub' }, 'click a tab to reopen it')), q, list, el('a', { href: 'chrome://history', class: 'sub' }, 'Open full history'));
++  render();
++}
++
++// ---- Clipboard history: captured whenever you come back to Orbit ----
++function viewClipboard(view) {
++  const items = load('clipboard', []);
++  const list = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
++  const status = el('div', { class: 'sub' }, 'Copy something anywhere, then return to this tab or press "Capture now". History stays on this device.');
++  const persist = () => save('clipboard', items);
++  const render = () => {
++    list.replaceChildren(...(items.length ? items.map((it, i) => el('div', { class: 'item row', style: 'cursor:default' },
++      el('div', { class: 'grow', style: 'white-space:pre-wrap;word-break:break-word;user-select:text;max-height:80px;overflow:hidden' }, it.text),
++      el('button', { class: 'btn', onclick: () => navigator.clipboard.writeText(it.text) }, 'Copy'),
++      el('button', { class: 'x', title: 'Delete', onclick: () => { items.splice(i, 1); persist(); render(); } }, '×'))) : [el('div', { class: 'sub' }, 'Nothing captured yet.')]));
++  };
++  const capture = async () => {
++    try {
++      const text = await navigator.clipboard.readText();
++      if (text && text.trim() && items[0]?.text !== text) { items.unshift({ text: text.slice(0, 5000), at: Date.now() }); items.length = Math.min(items.length, 100); persist(); render(); status.textContent = 'Captured.'; }
++    } catch (e) { status.textContent = 'Clipboard not available: ' + e.message; }
++  };
++  window.addEventListener('focus', capture);
++  document.addEventListener('visibilitychange', () => { if (!document.hidden) capture(); });
++  view.append(el('h2', {}, 'Clipboard'), el('div', { class: 'tools' }, el('button', { class: 'btn primary', onclick: capture }, 'Capture now'), el('button', { class: 'btn', onclick: () => { items.length = 0; persist(); render(); } }, 'Clear all')), status, list);
++  render(); capture();
++}
++
++const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels, focus: viewFocus, toolkit: viewToolkit, library: viewLibrary, settings: viewSettings, assistant: viewAssistant, spaces: viewSpaces, tidy: viewTidy, boosts: viewBoosts, archive: viewArchive, clipboard: viewClipboard };
+ 
+ function route() {
+   const id = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'projects';
+diff --git a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+index 5b3fcac442..5deac7cc54 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
++++ b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+@@ -22,7 +22,9 @@ source_set("orbit_ntp") {
+     "//chrome/browser/profiles:profile",
+     "//chrome/browser/resources/orbit_ntp:resources",
+     "//chrome/common:constants",
++    "//chrome/browser/sessions",
+     "//chrome/browser/ui/orbit:boosts",
++    "//components/sessions",
+     "//chrome/browser/ui/tabs:tab_group",
+     "//chrome/browser/ui/webui:webui_util",
+     "//chrome/browser/ui/tabs:tab_strip",
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+index 862efffffa..78f37de98c 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.cc
+@@ -12,6 +12,7 @@
+ #include "base/functional/bind.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sessions/tab_restore_service_factory.h"
+ #include "chrome/browser/ui/browser_tabstrip.h"
+ #include "chrome/browser/ui/orbit/orbit_boosts_tab_helper.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+@@ -19,6 +20,8 @@
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/webui/webui_embedding_context.h"
+ #include "components/prefs/pref_service.h"
++#include "components/sessions/core/tab_restore_service.h"
++#include "components/sessions/core/tab_restore_types.h"
+ #include "components/prefs/scoped_user_pref_update.h"
+ #include "components/tab_groups/tab_group_color.h"
+ #include "components/tab_groups/tab_group_id.h"
+@@ -67,6 +70,10 @@ void OrbitBrowserHandler::RegisterMessages() {
+       "orbitGroupTabs",
+       base::BindRepeating(&OrbitBrowserHandler::HandleGroupTabs,
+                           base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "orbitClosedTabs",
++      base::BindRepeating(&OrbitBrowserHandler::HandleClosedTabs,
++                          base::Unretained(this)));
+   web_ui()->RegisterMessageCallback(
+       "orbitGetBoosts",
+       base::BindRepeating(&OrbitBrowserHandler::HandleGetBoosts,
+@@ -206,19 +213,22 @@ void OrbitBrowserHandler::HandleGroupTabs(const base::ListValue& args) {
+ }
+ 
+ void OrbitBrowserHandler::HandleFocusTab(const base::ListValue& args) {
+-  if (args.empty() || !args[0].is_int()) {
++  if (args.size() < 2 || !args[0].is_string() || !args[1].is_int()) {
+     return;
+   }
++  AllowJavascript();
++  bool ok = false;
+   BrowserWindowInterface* browser =
+       webui::GetBrowserWindowInterface(web_ui()->GetWebContents());
+-  if (!browser) {
+-    return;
+-  }
+-  TabStripModel* strip = browser->GetTabStripModel();
+-  int index = args[0].GetInt();
+-  if (index >= 0 && index < strip->count()) {
+-    strip->ActivateTabAt(index);
++  if (browser) {
++    TabStripModel* strip = browser->GetTabStripModel();
++    int index = args[1].GetInt();
++    if (index >= 0 && index < strip->count()) {
++      strip->ActivateTabAt(index);
++      ok = true;
++    }
+   }
++  ResolveJavascriptCallback(args[0], base::Value(ok));
+ }
+ 
+ void OrbitBrowserHandler::HandleGetBoosts(const base::ListValue& args) {
+@@ -253,3 +263,33 @@ void OrbitBrowserHandler::HandleSetBoost(const base::ListValue& args) {
+   }
+   ResolveJavascriptCallback(args[0], base::Value(true));
+ }
++
++void OrbitBrowserHandler::HandleClosedTabs(const base::ListValue& args) {
++  if (args.empty() || !args[0].is_string()) {
++    return;
++  }
++  AllowJavascript();
++  base::ListValue result;
++  sessions::TabRestoreService* service =
++      TabRestoreServiceFactory::GetForProfile(Profile::FromWebUI(web_ui()));
++  if (service) {
++    for (const auto& entry : service->entries()) {
++      if (entry->type != sessions::tab_restore::Type::TAB) {
++        continue;
++      }
++      const auto* tab =
++          static_cast<const sessions::tab_restore::Tab*>(entry.get());
++      if (tab->navigations.empty()) {
++        continue;
++      }
++      const auto& nav = tab->navigations[tab->normalized_navigation_index()];
++      base::DictValue item;
++      item.Set("title", base::UTF16ToUTF8(nav.title()));
++      item.Set("url", nav.virtual_url().spec());
++      item.Set("closedMs", static_cast<double>(
++                           entry->timestamp.InMillisecondsSinceUnixEpoch()));
++      result.Append(std::move(item));
++    }
++  }
++  ResolveJavascriptCallback(args[0], result);
++}
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+index 6c228a01f9..c10156941c 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_browser_handler.h
+@@ -28,11 +28,13 @@ class OrbitBrowserHandler : public content::WebUIMessageHandler {
+   void HandleOpenTabs(const base::ListValue& args);
+   // [callbackId, [{title, color, tabs: [index...]}]] -> number of groups made
+   void HandleGroupTabs(const base::ListValue& args);
++  // [callbackId] -> [{title, url, closedMs}] recently closed tabs
++  void HandleClosedTabs(const base::ListValue& args);
+   // [callbackId] -> { host: {css, js, enabled, ...} }
+   void HandleGetBoosts(const base::ListValue& args);
+   // [callbackId, host, boost dict] -> saves (an empty dict removes it)
+   void HandleSetBoost(const base::ListValue& args);
+-  // [index] -> activates the tab
++  // [callbackId, index] -> activates the tab
+   void HandleFocusTab(const base::ListValue& args);
+ };
+ 
+-- 
+2.54.0 (Apple Git-157)
+

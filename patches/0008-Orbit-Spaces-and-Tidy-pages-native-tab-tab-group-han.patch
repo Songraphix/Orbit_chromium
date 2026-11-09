@@ -1,7 +1,7 @@
 From 530a06adbac18e0bd2825b1c4369130b8106d905 Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 22:36:05 +0000
-Subject: [PATCH 8/9] Orbit: Spaces and Tidy pages, native tab/tab-group
+Subject: [PATCH 08/10] Orbit: Spaces and Tidy pages, native tab/tab-group
  handler
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

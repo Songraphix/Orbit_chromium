@@ -83,3 +83,10 @@
 - Verified on a local http page: CSS applied (red heading), zap hid .ad, JS set an attribute.
 - Limits: JS runs in an isolated world (can touch DOM, not page variables); strict-CSP eval behaviour untested; no "zap picker" (click an element to hide it), no per-boost colour picker like Orbit's.
 - Lint gotcha: chrome.send and cr.js are lint-restricted in WebUI TS; use sendWithPromise with a line-level eslint-disable, and handlers must take callbackId as args[0].
+
+## Phase 5d — Archive, Clipboard, backup, command palette (done)
+- Archive (#archive): recently closed tabs from TabRestoreService (orbitClosedTabs); click reopens; search. Browser only keeps ~25 entries; older = chrome://history. Not Orbit's auto-archive of idle tabs (needs a tab-lifecycle policy).
+- Clipboard (#clipboard): captures navigator.clipboard.readText() when the page gains focus/visibility or on "Capture now"; up to 100 items in localStorage. NOT a background clipboard monitor. Note: it reads the real clipboard when opened (testing captured a real link; the throwaway test profile was deleted).
+- Settings: Export/Import my data (JSON of all orbit.* localStorage except settings, so API key is never exported).
+- New tab search box = command palette: matches Orbit pages, open tabs (switch via orbitFocusTab), Spaces, plus web search fallback.
+- Verified via CDP: archive lists a closed tab; clipboard page captured; export/import buttons present; palette shows Notes for "note". File download/import round-trip NOT tested.

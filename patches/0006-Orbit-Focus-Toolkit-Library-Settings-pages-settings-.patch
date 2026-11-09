@@ -1,8 +1,8 @@
 From b51036268cafd3b84f91e3aa8fa3dc729a9c275b Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 22:02:52 +0000
-Subject: [PATCH 6/9] Orbit: Focus, Toolkit, Library, Settings pages; settings
- drive new tab (name, clock, search engine, wallpaper)
+Subject: [PATCH 06/10] Orbit: Focus, Toolkit, Library, Settings pages;
+ settings drive new tab (name, clock, search engine, wallpaper)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---

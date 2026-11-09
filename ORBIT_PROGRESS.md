@@ -61,3 +61,11 @@
 - New tab page reads settings: name, 24h, engine (fixes the "always Google" gap), wallpaper (3 extra wallpapers embedded in wallpapers.css ~1MB).
 - Tested via CDP on a private instance: all pass (focus tick, sound button, JSON format, settings -> NTP greeting + wallpaper). Not visually screenshotted.
 - Archive = link to chrome://history (no Orbit-style archive: needs native closed-tab data).
+
+## Phase 4c — assistant + more widgets (done)
+- Assistant: pages.html#assistant. Chats in localStorage, Anthropic Messages API (non-streaming), key + model set on Settings page (stored in localStorage of chrome://orbit-newtab; the user chose this). New tab search box: start with "?" to ask the assistant; "Ask Orbit" widget too.
+- New tab widgets (picker in Settings): projects, palette, notes, focus, today, quote, weather (Open-Meteo; city set in Settings), countdown, stopwatch, world clocks, ask.
+- IMPORTANT design finding: a trusted chrome:// WebUI page that calls fetch() to an external host wedges (renderer unresponsive). Fix: OrbitFetchHandler (chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.*) does the request in the browser process via SimpleURLLoader; JS uses chrome.send("orbitFetch") through cr.js sendWithPromise (eslint rule no-restricted-imports silenced on that line). Allowlist: api.anthropic.com, api.open-meteo.com, geocoding-api.open-meteo.com. No cookies. Response cap 5MB (SimpleURLLoader::kMaxBoundedStringDownloadSize; larger CHECK-crashes the browser).
+- Verified: weather renders live data; assistant reaches Anthropic and returns 401 for a fake key (real key not tested).
+- Streaming dropped (non-streaming only).
+- Debug lessons: attach CDP only via --remote-debugging-port=0 + DevToolsActivePort; a crashed browser looks like a hung evaluate; check ~/Library/Logs/DiagnosticReports/Orbit*.ips.

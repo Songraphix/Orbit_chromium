@@ -1,0 +1,582 @@
+From ad09a7418019c2ac20c1c423e72b15e13b6478ae Mon Sep 17 00:00:00 2001
+From: Editor <editor@Dees-Mac-mini.local>
+Date: Mon, 9 Nov 2026 22:32:36 +0000
+Subject: [PATCH 7/7] Orbit: assistant page, weather/countdown/stopwatch/clocks
+ widgets, browser-side fetch handler (allowlisted hosts)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../resources/orbit_ntp/orbit_ntp.html        |   2 +-
+ .../browser/resources/orbit_ntp/orbit_ntp.ts  | 117 ++++++++++++++--
+ chrome/browser/resources/orbit_ntp/pages.ts   |  81 ++++++++++-
+ chrome/browser/ui/webui/orbit_ntp/BUILD.gn    |  14 +-
+ .../ui/webui/orbit_ntp/orbit_fetch_handler.cc | 132 ++++++++++++++++++
+ .../ui/webui/orbit_ntp/orbit_fetch_handler.h  |  45 ++++++
+ .../ui/webui/orbit_ntp/orbit_ntp_ui.cc        |   2 +
+ 7 files changed, 373 insertions(+), 20 deletions(-)
+ create mode 100644 chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.cc
+ create mode 100644 chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.h
+
+diff --git a/chrome/browser/resources/orbit_ntp/orbit_ntp.html b/chrome/browser/resources/orbit_ntp/orbit_ntp.html
+index 8f3c57e409..307142c407 100644
+--- a/chrome/browser/resources/orbit_ntp/orbit_ntp.html
++++ b/chrome/browser/resources/orbit_ntp/orbit_ntp.html
+@@ -17,7 +17,7 @@
+       <div id="tagline" class="tagline">Focus. Create. Build. Repeat.</div>
+       <form id="search" class="search glass" autocomplete="off">
+         <svg class="spark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+-        <input id="q" type="text" placeholder="Search the web or enter a website..." aria-label="Search or enter address" autofocus>
++        <input id="q" type="text" placeholder="Search the web or enter a website (start with ? to ask Orbit)..." aria-label="Search or enter address" autofocus>
+       </form>
+     </section>
+     <section id="widgets" class="widgets"></section>
+diff --git a/chrome/browser/resources/orbit_ntp/orbit_ntp.ts b/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
+index c3db39fb0d..a6c123f537 100644
+--- a/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
++++ b/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
+@@ -2,6 +2,17 @@
+ // Copyright 2026 Songraphix. Orbit new tab page.
+ // Vanilla JS, no innerHTML (WebUI enforces Trusted Types). State lives in
+ // localStorage; nothing here talks to Electron or to the network.
++// eslint-disable-next-line no-restricted-imports
++import {sendWithPromise} from '//resources/js/cr.js';
++
++// Trusted chrome:// pages must not call fetch() themselves; the browser makes
++// the request for us (allowlisted hosts only, see orbit_fetch_handler.cc).
++function netFetch(url, opts = {}) {
++  return sendWithPromise('orbitFetch', url, opts.method || 'GET', opts.headers || {}, opts.body || '').then((r) => ({
++    ok: r.status >= 200 && r.status < 300, status: r.status, text: () => Promise.resolve(r.body), json: () => Promise.resolve(JSON.parse(r.body)),
++  }));
++}
++
+ 'use strict';
+ 
+ const $ = (id) => document.getElementById(id);
+@@ -24,7 +35,7 @@ function save(key, value) {
+ }
+ 
+ // ---- Settings (edited on the Settings page) ----
+-const settings = Object.assign({ hour24: true, engine: 'google', wallpaper: 'terrace' }, load('settings', {}));
++const settings = Object.assign({ hour24: true, engine: 'google', wallpaper: 'terrace', widgets: ['projects', 'palette', 'notes', 'focus', 'today', 'quote'] }, load('settings', {}));
+ const WALLPAPERS = { terrace: null, misty: '--wp-misty', aurora: '--wp-aurora', arches: '--wp-arches' };
+ if (WALLPAPERS[settings.wallpaper]) document.documentElement.style.setProperty('--orbit-wallpaper', `var(${WALLPAPERS[settings.wallpaper]})`);
+ const ENGINES = { google: 'https://www.google.com/search?q=', duckduckgo: 'https://duckduckgo.com/?q=', bing: 'https://www.bing.com/search?q=', brave: 'https://search.brave.com/search?q=' };
+@@ -60,9 +71,15 @@ function go(text) {
+   else url = (ENGINES[settings.engine] || ENGINES.google) + encodeURIComponent(text);
+   window.location.href = url;
+ }
+-$('search').addEventListener('submit', (e) => { e.preventDefault(); go($('q').value); });
++$('search').addEventListener('submit', (e) => {
++  e.preventDefault();
++  const v = $('q').value.trim();
++  if (v.startsWith('?') && v.length > 1) { save('askPending', v.slice(1).trim()); location.href = 'pages.html#assistant'; return; }
++  go(v);
++});
+ 
+ // ---- Widgets ----
++const WIDGETS = {};
+ const widgets = $('widgets');
+ function card(title, sub) {
+   const head = el('h2', {}, title);
+@@ -72,8 +89,8 @@ function card(title, sub) {
+   return { c, head };
+ }
+ 
+-// Projects
+-{
++// projects
++WIDGETS.projects = () => {
+   const { c } = card('Projects');
+   const projects = load('projects', []);
+   const prog = (p) => { const t = p.tasks || []; return { done: t.filter((x) => x.done).length, total: t.length }; };
+@@ -93,8 +110,8 @@ function card(title, sub) {
+   c.append(list, add); render();
+ }
+ 
+-// Palette
+-{
++// palette
++WIDGETS.palette = () => {
+   const { c, head } = card('Palette');
+   const bar = el('div', { class: 'palette' });
+   const gen = () => {
+@@ -109,8 +126,8 @@ function card(title, sub) {
+   c.append(bar); render();
+ }
+ 
+-// Notes (the most recent note from the Notes page)
+-{
++// notes
++WIDGETS.notes = () => {
+   const { c } = card('Notes');
+   const ta = el('textarea', { class: 'field', placeholder: 'Jot something down…' });
+   let notes = load('notelist', null);
+@@ -127,8 +144,8 @@ function card(title, sub) {
+   c.append(ta);
+ }
+ 
+-// Focus timer
+-{
++// focus
++WIDGETS.focus = () => {
+   const { c } = card('Your Focus');
+   let secs = 25 * 60, timer = null;
+   const t = el('div', { class: 'timer' });
+@@ -146,8 +163,8 @@ function card(title, sub) {
+   fmt(); c.append(t, status, btn);
+ }
+ 
+-// Today (tasks)
+-{
++// today
++WIDGETS.today = () => {
+   const { c, head } = card('Today');
+   const tasks = load('tasks', []);
+   const list = el('div', { style: 'display:flex;flex-direction:column;gap:8px;flex:1' });
+@@ -167,8 +184,8 @@ function card(title, sub) {
+   c.append(list, add); render();
+ }
+ 
+-// Quote
+-{
++// quote
++WIDGETS.quote = () => {
+   const { c, head } = card('');
+   const quotes = [
+     'Creativity is intelligence having fun.', 'Well begun is half done.', 'Make it work, make it right, make it fast.',
+@@ -181,6 +198,78 @@ function card(title, sub) {
+   c.append(q); render();
+ }
+ 
++
++// Weather (Open-Meteo, no key; the city is set on the Settings page)
++WIDGETS.weather = () => {
++  const { c } = card('Weather');
++  const body = el('div', { style: 'display:flex;flex-direction:column;gap:6px' });
++  c.append(body);
++  const city = settings.city;
++  if (!city) { body.textContent = 'Set your city in Settings.'; return; }
++  body.textContent = 'Loading…';
++  const CODES = { 0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog', 48: 'Fog', 51: 'Drizzle', 53: 'Drizzle', 55: 'Drizzle', 61: 'Rain', 63: 'Rain', 65: 'Heavy rain', 71: 'Snow', 73: 'Snow', 75: 'Heavy snow', 80: 'Showers', 81: 'Showers', 82: 'Heavy showers', 95: 'Thunderstorm', 96: 'Thunderstorm', 99: 'Thunderstorm' };
++  netFetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=auto`)
++    .then((r) => r.json()).then((d) => {
++      body.replaceChildren(
++        el('div', { style: 'font-size:40px;font-weight:600' }, `${Math.round(d.current.temperature_2m)}°`),
++        el('div', {}, CODES[d.current.weather_code] ?? 'Weather'),
++        el('div', { class: 'sub' }, `${city.name} · H ${Math.round(d.daily.temperature_2m_max[0])}° L ${Math.round(d.daily.temperature_2m_min[0])}° · wind ${Math.round(d.current.wind_speed_10m)} km/h`));
++    }).catch(() => { body.textContent = 'Weather unavailable.'; });
++};
++
++// Countdown
++WIDGETS.countdown = () => {
++  const { c } = card('Countdown');
++  const cd = load('countdown', { label: 'Launch day', date: '' });
++  const label = el('input', { class: 'field', value: cd.label, placeholder: 'Label' });
++  const date = el('input', { class: 'field', type: 'date', value: cd.date });
++  const out = el('div', { style: 'font-size:34px;font-weight:600' });
++  const render = () => {
++    if (!date.value) { out.textContent = 'Pick a date'; return; }
++    const days = Math.ceil((new Date(date.value + 'T00:00:00') - Date.now()) / 86400000);
++    out.textContent = days > 0 ? `${days} day${days === 1 ? '' : 's'}` : days === 0 ? 'Today!' : `${-days}d ago`;
++  };
++  const store = () => { save('countdown', { label: label.value, date: date.value }); render(); };
++  label.addEventListener('input', store); date.addEventListener('change', store);
++  c.append(out, label, date); render();
++};
++
++// Stopwatch
++WIDGETS.stopwatch = () => {
++  const { c } = card('Stopwatch');
++  let start = 0, elapsed = 0, timer = null;
++  const t = el('div', { class: 'timer' });
++  const fmt = () => { const ms = elapsed + (timer ? Date.now() - start : 0); const s = Math.floor(ms / 1000); t.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}.${String(Math.floor((ms % 1000) / 10)).padStart(2, '0')}`; };
++  const go = el('button', { class: 'btn primary' }, 'Start');
++  go.addEventListener('click', () => {
++    if (timer) { elapsed += Date.now() - start; clearInterval(timer); timer = null; go.textContent = 'Start'; }
++    else { start = Date.now(); timer = setInterval(fmt, 50); go.textContent = 'Stop'; }
++    fmt();
++  });
++  const reset = el('button', { class: 'btn', onclick: () => { clearInterval(timer); timer = null; elapsed = 0; go.textContent = 'Start'; fmt(); } }, 'Reset');
++  fmt(); c.append(t, el('div', { class: 'row' }, go, reset));
++};
++
++// World clocks
++WIDGETS.clocks = () => {
++  const { c } = card('World clocks');
++  const zones = [['New York', 'America/New_York'], ['London', 'Europe/London'], ['Lagos', 'Africa/Lagos'], ['Tokyo', 'Asia/Tokyo']];
++  const rows = zones.map(([n, z]) => { const t = el('span', { class: 'sub' }); return { z, t, row: el('div', { class: 'row' }, el('span', { class: 'grow' }, n), t) }; });
++  const upd = () => { for (const r of rows) r.t.textContent = new Date().toLocaleTimeString([], { timeZone: r.z, hour: '2-digit', minute: '2-digit', hour12: !settings.hour24 }); };
++  upd(); setInterval(upd, 15000);
++  c.append(...rows.map((r) => r.row));
++};
++
++// Ask: jump to the assistant
++WIDGETS.ask = () => {
++  const { c } = card('Ask Orbit');
++  const f = el('input', { class: 'field', placeholder: 'Ask the assistant…' });
++  f.addEventListener('keydown', (e) => { if (e.key === 'Enter' && f.value.trim()) { save('askPending', f.value.trim()); location.href = 'pages.html#assistant'; } });
++  c.append(el('div', { class: 'sub' }, settings.apiKey ? 'Your question opens the assistant.' : 'Add your API key in Settings first.'), f);
++};
++
++for (const k of settings.widgets) WIDGETS[k]?.();
++
+ // ---- Dock (shortcuts) ----
+ const dock = $('dock');
+ const colors = ['#4285f4', '#ef4444', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899'];
+diff --git a/chrome/browser/resources/orbit_ntp/pages.ts b/chrome/browser/resources/orbit_ntp/pages.ts
+index f63954b2be..656953e740 100644
+--- a/chrome/browser/resources/orbit_ntp/pages.ts
++++ b/chrome/browser/resources/orbit_ntp/pages.ts
+@@ -1,6 +1,17 @@
+ // @ts-nocheck
+ // Copyright 2026 Songraphix. Orbit full-tab pages: Projects, Notes, Tasks, Easels.
+ // Shares localStorage with the new tab page (same origin). No innerHTML.
++// eslint-disable-next-line no-restricted-imports
++import {sendWithPromise} from '//resources/js/cr.js';
++
++// Trusted chrome:// pages must not call fetch() themselves; the browser makes
++// the request for us (allowlisted hosts only, see orbit_fetch_handler.cc).
++function netFetch(url, opts = {}) {
++  return sendWithPromise('orbitFetch', url, opts.method || 'GET', opts.headers || {}, opts.body || '').then((r) => ({
++    ok: r.status >= 200 && r.status < 300, status: r.status, text: () => Promise.resolve(r.body), json: () => Promise.resolve(JSON.parse(r.body)),
++  }));
++}
++
+ 'use strict';
+ 
+ const $ = (id) => document.getElementById(id);
+@@ -32,11 +43,12 @@ const SECTIONS = [
+   { id: 'focus', label: 'Focus', icon: '◎' },
+   { id: 'toolkit', label: 'Toolkit', icon: '⚒' },
+   { id: 'library', label: 'Library', icon: '▥' },
++  { id: 'assistant', label: 'Assistant', icon: '✦' },
+   { id: 'settings', label: 'Settings', icon: '⚙' },
+ ];
+ 
+ const WALLPAPERS = { terrace: ['Cloud terrace', null], misty: ['Misty sunrise', '--wp-misty'], aurora: ['Aurora glass', '--wp-aurora'], arches: ['White arches', '--wp-arches'] };
+-const settings = Object.assign({ hour24: true, engine: 'google', wallpaper: 'terrace' }, load('settings', {}));
++const settings = Object.assign({ hour24: true, engine: 'google', wallpaper: 'terrace', model: 'claude-sonnet-5-5', apiKey: '', widgets: ['projects', 'palette', 'notes', 'focus', 'today', 'quote'] }, load('settings', {}));
+ if (WALLPAPERS[settings.wallpaper]?.[1]) document.documentElement.style.setProperty('--orbit-wallpaper', `var(${WALLPAPERS[settings.wallpaper][1]})`);
+ 
+ // ---- Data (shared with the new tab page) ----
+@@ -292,10 +304,73 @@ function viewSettings(view) {
+   const hour = el('input', { type: 'checkbox' }); hour.checked = !!settings.hour24; hour.addEventListener('change', () => { settings.hour24 = hour.checked; persist(); });
+   const wp = el('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' }, ...Object.entries(WALLPAPERS).map(([k, [label, v]]) => el('button', { class: 'btn' + (settings.wallpaper === k ? ' primary' : ''), onclick: () => { settings.wallpaper = k; persist(); document.documentElement.style.setProperty('--orbit-wallpaper', v ? `var(${v})` : ''); route(); } }, label)));
+   const reset = el('button', { class: 'btn', style: 'align-self:flex-start', onclick: () => { if (confirm('Delete all Orbit notes, tasks, projects, easels and settings?')) { for (const k of Object.keys(localStorage)) if (k.startsWith('orbit.')) localStorage.removeItem(k); location.reload(); } } }, 'Erase all Orbit data');
+-  view.append(el('h2', {}, 'Settings'), row('Name', nameI), row('Search engine', select('engine', [['google', 'Google'], ['duckduckgo', 'DuckDuckGo'], ['bing', 'Bing'], ['brave', 'Brave Search']])), row('24-hour clock', hour), el('div', { class: 'sub', style: 'margin-top:8px' }, 'Wallpaper'), wp, el('div', { style: 'flex:1' }), reset);
++  const keyI = el('input', { class: 'field', type: 'text', placeholder: 'sk-ant-…', value: settings.apiKey || '', autocomplete: 'off', spellcheck: 'false', style: '-webkit-text-security:disc' });
++  keyI.addEventListener('input', () => { settings.apiKey = keyI.value.trim(); persist(); });
++  const cityI = el('input', { class: 'field', placeholder: 'City for the weather widget', value: settings.city?.name || '' });
++  const cityOut = el('div', { class: 'sub' }, settings.city ? `Using ${settings.city.name}` : '');
++  cityI.addEventListener('keydown', (e) => {
++    if (e.key !== 'Enter' || !cityI.value.trim()) return;
++    netFetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name=' + encodeURIComponent(cityI.value.trim())).then((r) => r.json()).then((d) => {
++      const r = d.results?.[0]; if (!r) { cityOut.textContent = 'City not found'; return; }
++      settings.city = { name: `${r.name}${r.country ? ', ' + r.country : ''}`, lat: r.latitude, lon: r.longitude }; persist(); cityOut.textContent = `Using ${settings.city.name}`;
++    }).catch(() => { cityOut.textContent = 'Lookup failed'; });
++  });
++  const ALL = [['projects', 'Projects'], ['palette', 'Palette'], ['notes', 'Notes'], ['focus', 'Focus timer'], ['today', 'Today'], ['quote', 'Quote'], ['weather', 'Weather'], ['countdown', 'Countdown'], ['stopwatch', 'Stopwatch'], ['clocks', 'World clocks'], ['ask', 'Ask Orbit']];
++  const widgetBox = el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' }, ...ALL.map(([k, l]) => { const cb = el('input', { type: 'checkbox' }); cb.checked = settings.widgets.includes(k); cb.addEventListener('change', () => { settings.widgets = ALL.map(([x]) => x).filter((x) => (x === k ? cb.checked : settings.widgets.includes(x))); persist(); }); return el('label', { class: 'btn', style: 'display:flex;gap:6px;align-items:center' }, cb, l); }));
++  view.append(el('h2', {}, 'Settings'), row('Anthropic API key', keyI), row('Model', select('model', [['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-opus-5-5', 'Opus 5.5'], ['claude-haiku-5-5', 'Haiku 5.5']])), row('City (press Enter)', cityI), cityOut, el('div', { class: 'sub', style: 'margin-top:8px' }, 'New tab widgets'), widgetBox, row('Name', nameI), row('Search engine', select('engine', [['google', 'Google'], ['duckduckgo', 'DuckDuckGo'], ['bing', 'Bing'], ['brave', 'Brave Search']])), row('24-hour clock', hour), el('div', { class: 'sub', style: 'margin-top:8px' }, 'Wallpaper'), wp, el('div', { style: 'flex:1' }), reset);
++}
++
++// ---- Assistant (Anthropic API, key from Settings; requests go through the browser) ----
++let assistantBusy = false;
++function viewAssistant(view) {
++  const chats = load('chats', []);
++  let selected = chats[0]?.id ?? null;
++  const left = el('div', { class: 'list' });
++  const right = el('div', { class: 'editor' });
++  const persist = () => save('chats', chats);
++  const log = el('div', { style: 'flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:0' });
++  const input = el('textarea', { class: 'field', placeholder: settings.apiKey ? 'Message Orbit… (Enter to send, Shift+Enter for a new line)' : 'Add your API key in Settings to chat.', style: 'flex:none;min-height:64px;max-height:160px;resize:vertical' });
++  const bubble = (m) => el('div', { style: `align-self:${m.role === 'user' ? 'flex-end' : 'flex-start'};max-width:80%;white-space:pre-wrap;word-break:break-word;user-select:text;padding:10px 14px;border-radius:14px;background:${m.role === 'user' ? 'rgb(47 123 220 / 0.7)' : 'rgb(255 255 255 / 0.12)'};line-height:1.45;font-size:14px` }, m.content || '…');
++  const renderList = () => {
++    left.replaceChildren(el('button', { class: 'btn primary', onclick: () => newChat() }, '+ New chat'), ...chats.map((c) => el('div', { class: 'item' + (c.id === selected ? ' on' : ''), onclick: () => { selected = c.id; renderList(); renderChat(); } },
++      el('div', { class: 't grow' }, c.title || 'New chat'), el('button', { class: 'x', title: 'Delete', onclick: (e) => { e.stopPropagation(); chats.splice(chats.indexOf(c), 1); selected = chats[0]?.id ?? null; persist(); renderList(); renderChat(); } }, '×'))));
++  };
++  const renderChat = () => {
++    const c = chats.find((x) => x.id === selected);
++    log.replaceChildren(...(c ? c.messages.map(bubble) : [el('div', { class: 'sub' }, 'Ask anything. Your conversations stay in this browser; messages go to the Anthropic API with the key you set.')]));
++    log.scrollTop = log.scrollHeight;
++  };
++  function newChat() { const c = { id: uid(), title: '', messages: [] }; chats.unshift(c); selected = c.id; persist(); renderList(); renderChat(); input.focus(); return c; }
++  async function send(text) {
++    if (assistantBusy || !text.trim()) return;
++    if (!settings.apiKey) { alert('Add your Anthropic API key in Settings first.'); return; }
++    let c = chats.find((x) => x.id === selected) || newChat();
++    c.messages.push({ role: 'user', content: text.trim() });
++    if (!c.title) c.title = text.trim().slice(0, 40);
++    const reply = { role: 'assistant', content: '' };
++    c.messages.push(reply); persist(); renderList(); renderChat();
++    assistantBusy = true;
++    try {
++      const resp = await netFetch('https://api.anthropic.com/v1/messages', {
++        method: 'POST',
++        headers: { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' },
++        body: JSON.stringify({ model: settings.model || 'claude-sonnet-5-5', max_tokens: 4096, system: 'You are Orbit, a concise, helpful assistant built into the Orbit browser.', messages: c.messages.slice(0, -1).map(({ role, content }) => ({ role, content })) }),
++      });
++      const data = await resp.json().catch(() => null);
++      if (!resp.ok) reply.content = `Error ${resp.status}: ${data?.error?.message ?? (await resp.text()).slice(0, 300)}`;
++      else reply.content = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('') || '(empty reply)';
++    } catch (e) { reply.content = 'Request failed: ' + e.message; }
++    assistantBusy = false; persist(); if (document.body.contains(log)) renderChat();
++  }
++  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const t = input.value; input.value = ''; send(t); } });
++  right.append(log, input);
++  view.append(el('h2', {}, 'Assistant', el('span', { class: 'sub' }, settings.model)), el('div', { class: 'split' }, left, right));
++  renderList(); renderChat();
++  const pending = load('askPending', null);
++  if (pending) { save('askPending', null); newChat(); send(pending); }
+ }
+ 
+-const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels, focus: viewFocus, toolkit: viewToolkit, library: viewLibrary, settings: viewSettings };
++const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels, focus: viewFocus, toolkit: viewToolkit, library: viewLibrary, settings: viewSettings, assistant: viewAssistant };
+ 
+ function route() {
+   const id = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'projects';
+diff --git a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+index 091d00b080..e74b5cd5a2 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
++++ b/chrome/browser/ui/webui/orbit_ntp/BUILD.gn
+@@ -3,8 +3,14 @@
+ # found in the LICENSE file.
+ 
+ source_set("orbit_ntp") {
+-  sources = [ "orbit_ntp_ui.cc" ]
+-  public = [ "orbit_ntp_ui.h" ]
++  sources = [
++    "orbit_fetch_handler.cc",
++    "orbit_ntp_ui.cc",
++  ]
++  public = [
++    "orbit_fetch_handler.h",
++    "orbit_ntp_ui.h",
++  ]
+   public_deps = [
+     "//chrome/common",
+     "//content/public/browser",
+@@ -14,7 +20,11 @@ source_set("orbit_ntp") {
+     "//chrome/browser/profiles:profile",
+     "//chrome/browser/resources/orbit_ntp:resources",
+     "//chrome/common:constants",
++    "//net",
++    "//net/traffic_annotation",
++    "//services/network/public/cpp",
+     "//services/network/public/mojom",
++    "//url",
+     "//ui/webui",
+   ]
+ }
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.cc b/chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.cc
+new file mode 100644
+index 0000000000..70a48785e5
+--- /dev/null
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.cc
+@@ -0,0 +1,132 @@
++// Copyright 2026 Songraphix. Orbit new tab page.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.h"
++
++#include <string>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/memory/weak_ptr.h"
++#include "chrome/browser/profiles/profile.h"
++#include "content/public/browser/storage_partition.h"
++#include "content/public/browser/web_ui.h"
++#include "net/base/load_flags.h"
++#include "net/http/http_response_headers.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
++#include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/cpp/shared_url_loader_factory.h"
++#include "services/network/public/cpp/simple_url_loader.h"
++#include "services/network/public/mojom/fetch_api.mojom.h"
++#include "services/network/public/mojom/url_response_head.mojom.h"
++#include "url/gurl.h"
++
++namespace {
++
++constexpr size_t kMaxResponseBytes =
++    network::SimpleURLLoader::kMaxBoundedStringDownloadSize;
++
++bool IsAllowedUrl(const GURL& url) {
++  if (!url.is_valid() || !url.SchemeIs("https")) {
++    return false;
++  }
++  const std::string host(url.host());
++  return host == "api.anthropic.com" || host == "api.open-meteo.com" ||
++         host == "geocoding-api.open-meteo.com";
++}
++
++}  // namespace
++
++OrbitFetchHandler::OrbitFetchHandler() = default;
++OrbitFetchHandler::~OrbitFetchHandler() = default;
++
++void OrbitFetchHandler::RegisterMessages() {
++  web_ui()->RegisterMessageCallback(
++      "orbitFetch", base::BindRepeating(&OrbitFetchHandler::HandleFetch,
++                                        base::Unretained(this)));
++}
++
++void OrbitFetchHandler::HandleFetch(const base::ListValue& args) {
++  if (args.size() < 5 || !args[0].is_string() || !args[1].is_string() ||
++      !args[2].is_string() || !args[3].is_dict() || !args[4].is_string()) {
++    return;
++  }
++  AllowJavascript();
++  const std::string callback_id = args[0].GetString();
++  GURL url(args[1].GetString());
++  if (!IsAllowedUrl(url)) {
++    base::DictValue result;
++    result.Set("status", 0);
++    result.Set("body", "Blocked: this address is not allowed.");
++    ResolveJavascriptCallback(base::Value(callback_id), result);
++    return;
++  }
++
++  net::NetworkTrafficAnnotationTag traffic_annotation =
++      net::DefineNetworkTrafficAnnotation("orbit_page_fetch", R"(
++        semantics {
++          sender: "Orbit pages"
++          description:
++            "Orbit's assistant page sends the user's chat messages to the "
++            "Anthropic API with the user's own API key, and the weather "
++            "widget asks Open-Meteo for the forecast of a user-chosen city."
++          trigger: "The user sends a chat message or opens the new tab page "
++                   "with the weather widget enabled."
++          data: "Chat messages, the user's API key, and a city name or "
++                "coordinates."
++          destination: OTHER
++        }
++        policy {
++          cookies_allowed: NO
++          setting: "Do not use the Orbit assistant or weather widget."
++          policy_exception_justification: "Not implemented."
++        })");
++
++  auto request = std::make_unique<network::ResourceRequest>();
++  request->url = url;
++  request->method = args[2].GetString() == "POST" ? "POST" : "GET";
++  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
++  request->load_flags = net::LOAD_DISABLE_CACHE;
++  for (const auto [key, value] : args[3].GetDict()) {
++    if (value.is_string()) {
++      request->headers.SetHeader(key, value.GetString());
++    }
++  }
++
++  auto loader = network::SimpleURLLoader::Create(std::move(request),
++                                                 traffic_annotation);
++  const std::string& body = args[4].GetString();
++  if (!body.empty()) {
++    loader->AttachStringForUpload(body, "application/json");
++  }
++  loader->SetAllowHttpErrorResults(true);
++
++  auto* factory = Profile::FromWebUI(web_ui())
++                      ->GetDefaultStoragePartition()
++                      ->GetURLLoaderFactoryForBrowserProcess()
++                      .get();
++  loaders_.push_back(std::move(loader));
++  auto it = std::prev(loaders_.end());
++  (*it)->DownloadToString(
++      factory,
++      base::BindOnce(&OrbitFetchHandler::OnDone, weak_factory_.GetWeakPtr(), it,
++                     callback_id),
++      kMaxResponseBytes);
++}
++
++void OrbitFetchHandler::OnDone(
++    std::list<std::unique_ptr<network::SimpleURLLoader>>::iterator it,
++    std::string callback_id,
++    std::optional<std::string> body) {
++  int status = 0;
++  const network::SimpleURLLoader* loader = it->get();
++  if (loader->ResponseInfo() && loader->ResponseInfo()->headers) {
++    status = loader->ResponseInfo()->headers->response_code();
++  }
++  base::DictValue result;
++  result.Set("status", status);
++  result.Set("body", body.has_value() ? *body : std::string("Network error"));
++  loaders_.erase(it);
++  ResolveJavascriptCallback(base::Value(callback_id), result);
++}
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.h b/chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.h
+new file mode 100644
+index 0000000000..51e524c172
+--- /dev/null
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.h
+@@ -0,0 +1,45 @@
++// Copyright 2026 Songraphix. Orbit new tab page.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_ORBIT_NTP_ORBIT_FETCH_HANDLER_H_
++#define CHROME_BROWSER_UI_WEBUI_ORBIT_NTP_ORBIT_FETCH_HANDLER_H_
++
++#include <list>
++#include <memory>
++#include <optional>
++#include <string>
++
++#include "base/values.h"
++#include "content/public/browser/web_ui_message_handler.h"
++
++namespace network {
++class SimpleURLLoader;
++}
++
++// Lets Orbit's pages call a short allowlist of web APIs (the Anthropic API for
++// the assistant, Open-Meteo for weather) through the browser process. Trusted
++// chrome:// pages must not make their own network requests, so JS calls
++// chrome.send("orbitFetch", [id, url, method, headers, body]) and gets back
++// {status, body}.
++class OrbitFetchHandler : public content::WebUIMessageHandler {
++ public:
++  OrbitFetchHandler();
++  OrbitFetchHandler(const OrbitFetchHandler&) = delete;
++  OrbitFetchHandler& operator=(const OrbitFetchHandler&) = delete;
++  ~OrbitFetchHandler() override;
++
++  // content::WebUIMessageHandler:
++  void RegisterMessages() override;
++
++ private:
++  void HandleFetch(const base::ListValue& args);
++  void OnDone(std::list<std::unique_ptr<network::SimpleURLLoader>>::iterator it,
++              std::string callback_id,
++              std::optional<std::string> body);
++
++  std::list<std::unique_ptr<network::SimpleURLLoader>> loaders_;
++  base::WeakPtrFactory<OrbitFetchHandler> weak_factory_{this};
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_ORBIT_NTP_ORBIT_FETCH_HANDLER_H_
+diff --git a/chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.cc b/chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.cc
+index efae4b6f40..1fd5f4462e 100644
+--- a/chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.cc
++++ b/chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.cc
+@@ -5,6 +5,7 @@
+ #include "chrome/browser/ui/webui/orbit_ntp/orbit_ntp_ui.h"
+ 
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/webui/orbit_ntp/orbit_fetch_handler.h"
+ #include "chrome/grit/orbit_ntp_resources.h"
+ #include "chrome/grit/orbit_ntp_resources_map.h"
+ #include "content/public/browser/web_ui.h"
+@@ -18,6 +19,7 @@ OrbitNtpUI::OrbitNtpUI(content::WebUI* web_ui)
+       Profile::FromWebUI(web_ui), chrome::kChromeUIOrbitNtpHost);
+   webui::SetupWebUIDataSource(source, kOrbitNtpResources,
+                               IDR_ORBIT_NTP_ORBIT_NTP_HTML);
++  web_ui->AddMessageHandler(std::make_unique<OrbitFetchHandler>());
+   // The wallpaper and font are embedded as data: URIs in orbit_assets.css.
+   source->OverrideContentSecurityPolicy(
+       network::mojom::CSPDirectiveName::ImgSrc,
+-- 
+2.54.0 (Apple Git-157)
+

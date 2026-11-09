@@ -1,7 +1,7 @@
 From 0cc1c17f46ef14860a444d594249492f49e13809 Mon Sep 17 00:00:00 2001
 From: Editor <editor@Dees-Mac-mini.local>
 Date: Mon, 9 Nov 2026 17:03:26 +0000
-Subject: [PATCH 3/6] Orbit: new tab page (chrome://orbit-newtab WebUI, used
+Subject: [PATCH 3/7] Orbit: new tab page (chrome://orbit-newtab WebUI, used
  for all new tabs)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

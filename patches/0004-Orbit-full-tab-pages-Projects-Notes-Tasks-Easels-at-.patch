@@ -1,0 +1,651 @@
+From 70edbc3ec7730cc6b66ec532645d2d16e7f618af Mon Sep 17 00:00:00 2001
+From: Editor <editor@Dees-Mac-mini.local>
+Date: Mon, 9 Nov 2026 21:23:59 +0000
+Subject: [PATCH 4/4] Orbit: full-tab pages (Projects, Notes, Tasks, Easels) at
+ chrome://orbit-newtab/pages.html
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ chrome/browser/resources/orbit_ntp/BUILD.gn   |   7 +-
+ .../browser/resources/orbit_ntp/orbit_ntp.ts  |  27 +-
+ chrome/browser/resources/orbit_ntp/pages.css  | 310 ++++++++++++++++++
+ chrome/browser/resources/orbit_ntp/pages.html |  17 +
+ chrome/browser/resources/orbit_ntp/pages.ts   | 205 ++++++++++++
+ 5 files changed, 557 insertions(+), 9 deletions(-)
+ create mode 100644 chrome/browser/resources/orbit_ntp/pages.css
+ create mode 100644 chrome/browser/resources/orbit_ntp/pages.html
+ create mode 100644 chrome/browser/resources/orbit_ntp/pages.ts
+
+diff --git a/chrome/browser/resources/orbit_ntp/BUILD.gn b/chrome/browser/resources/orbit_ntp/BUILD.gn
+index 8142bc3bbe..f6769f735b 100644
+--- a/chrome/browser/resources/orbit_ntp/BUILD.gn
++++ b/chrome/browser/resources/orbit_ntp/BUILD.gn
+@@ -12,8 +12,13 @@ build_webui("build") {
+     "orbit_assets.css",
+     "orbit_ntp.css",
+     "orbit_ntp.html",
++    "pages.css",
++    "pages.html",
++  ]
++  ts_files = [
++    "orbit_ntp.ts",
++    "pages.ts",
+   ]
+-  ts_files = [ "orbit_ntp.ts" ]
+   ts_composite = true
+   ts_deps = [ "//ui/webui/resources/js:build_ts" ]
+   webui_context_type = "trusted"
+diff --git a/chrome/browser/resources/orbit_ntp/orbit_ntp.ts b/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
+index 4f98c4a6be..59b182f8c2 100644
+--- a/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
++++ b/chrome/browser/resources/orbit_ntp/orbit_ntp.ts
+@@ -69,17 +69,18 @@ function card(title, sub) {
+ // Projects
+ {
+   const { c } = card('Projects');
+-  const projects = load('projects', [{ name: 'My first project', done: 0, total: 5, color: '#8b5cf6' }]);
++  const projects = load('projects', []);
++  const prog = (p) => { const t = p.tasks || []; return { done: t.filter((x) => x.done).length, total: t.length }; };
+   const list = el('div', { style: 'display:flex;flex-direction:column;gap:12px' });
+   const render = () => {
+     list.replaceChildren(...projects.map((p) => el('div', {},
+-      el('div', { class: 'row' }, el('span', { class: 'dot', style: `background:${p.color}` }), el('span', { class: 'grow' }, p.name), el('span', { class: 'sub' }, `${p.done}/${p.total}`)),
+-      el('div', { class: 'bar', style: 'margin-top:6px' }, el('i', { style: `width:${(100 * p.done) / p.total}%` })))));
++      el('div', { class: 'row' }, el('span', { class: 'dot', style: `background:${p.color}` }), el('span', { class: 'grow' }, p.name), el('span', { class: 'sub' }, `${prog(p).done}/${prog(p).total}`)),
++      el('div', { class: 'bar', style: 'margin-top:6px' }, el('i', { style: `width:${prog(p).total ? (100 * prog(p).done) / prog(p).total : 0}%` })))));
+   };
+   const add = el('input', { class: 'field', placeholder: 'Add a project…' });
+   add.addEventListener('keydown', (e) => {
+     if (e.key === 'Enter' && add.value.trim()) {
+-      projects.push({ name: add.value.trim(), done: 0, total: 5, color: ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b'][projects.length % 4] });
++      projects.push({ id: Math.random().toString(36).slice(2, 10), name: add.value.trim(), tasks: [], color: ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b'][projects.length % 4] });
+       add.value = ''; save('projects', projects); render();
+     }
+   });
+@@ -102,12 +103,21 @@ function card(title, sub) {
+   c.append(bar); render();
+ }
+ 
+-// Notes
++// Notes (the most recent note from the Notes page)
+ {
+   const { c } = card('Notes');
+   const ta = el('textarea', { class: 'field', placeholder: 'Jot something down…' });
+-  ta.value = load('notes', '');
+-  ta.addEventListener('input', () => save('notes', ta.value));
++  let notes = load('notelist', null);
++  if (!notes) {
++    const old = load('notes', '');
++    notes = old ? [{ id: 'quick', title: 'Quick note', body: old, updated: Date.now() }] : [];
++  }
++  ta.value = notes[0]?.body ?? '';
++  ta.addEventListener('input', () => {
++    if (!notes[0]) notes.unshift({ id: 'quick', title: 'Quick note', body: '', updated: 0 });
++    notes[0].body = ta.value; notes[0].updated = Date.now();
++    save('notelist', notes);
++  });
+   c.append(ta);
+ }
+ 
+@@ -188,6 +198,7 @@ function renderDock() {
+       try { const host = new URL(u).hostname.replace(/^www\./, ''); shortcuts.push({ title: host, url: u }); save('shortcuts', shortcuts); renderDock(); } catch {}
+     }
+   });
+-  dock.replaceChildren(...tiles, el('span', { class: 'sep' }), plus, input);
++  const nav = [['Projects', '▤'], ['Notes', '✎'], ['Tasks', '☑'], ['Easels', '✐']].map(([n, g]) => el('a', { class: 'tile', href: 'pages.html#' + n.toLowerCase(), title: n, style: 'background:rgb(255 255 255 / 0.16)' }, g));
++  dock.replaceChildren(...nav, el('span', { class: 'sep' }), ...tiles, el('span', { class: 'sep' }), plus, input);
+ }
+ renderDock();
+diff --git a/chrome/browser/resources/orbit_ntp/pages.css b/chrome/browser/resources/orbit_ntp/pages.css
+new file mode 100644
+index 0000000000..a08723b7d6
+--- /dev/null
++++ b/chrome/browser/resources/orbit_ntp/pages.css
+@@ -0,0 +1,310 @@
++/* Orbit full-tab pages: Projects, Notes, Tasks, Easels. */
++:root {
++  --night: #0c1f26;
++  --focus: #6cb8d9;
++  --accent: #6fb3aa;
++  --glass: rgb(12 31 38 / 0.46);
++  --glass-border: rgb(255 255 255 / 0.16);
++  --text: #fff;
++  --muted: rgb(255 255 255 / 0.62);
++  --ease: cubic-bezier(0.22, 1, 0.36, 1);
++}
++
++* {
++  box-sizing: border-box;
++}
++
++html,
++body {
++  height: 100%;
++  margin: 0;
++}
++
++body {
++  font-family: Comfortaa, -apple-system, system-ui, sans-serif;
++  color: var(--text);
++  background: var(--night) var(--orbit-wallpaper) center / cover no-repeat fixed;
++  -webkit-font-smoothing: antialiased;
++}
++
++body::before {
++  content: '';
++  position: fixed;
++  inset: 0;
++  background: rgb(12 31 38 / 0.45);
++  pointer-events: none;
++}
++
++#app {
++  position: relative;
++  display: flex;
++  gap: 14px;
++  height: 100%;
++  padding: 14px;
++}
++
++.glass {
++  background: var(--glass);
++  border: 1px solid var(--glass-border);
++  -webkit-backdrop-filter: blur(28px) saturate(1.4);
++  backdrop-filter: blur(28px) saturate(1.4);
++  border-radius: 18px;
++}
++
++#nav {
++  width: 210px;
++  flex: none;
++  padding: 14px 10px;
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++
++#nav h1 {
++  font-size: 15px;
++  margin: 4px 10px 12px;
++}
++
++#nav a {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 10px 12px;
++  border-radius: 12px;
++  color: var(--text);
++  text-decoration: none;
++  font-size: 14px;
++  transition: background 0.14s var(--ease);
++}
++
++#nav a:hover {
++  background: rgb(255 255 255 / 0.08);
++}
++
++#nav a.on {
++  background: rgb(255 255 255 / 0.18);
++}
++
++#view {
++  flex: 1;
++  min-width: 0;
++  padding: 22px 26px;
++  overflow: auto;
++  display: flex;
++  flex-direction: column;
++  gap: 14px;
++}
++
++h2 {
++  margin: 0;
++  font-size: 22px;
++  display: flex;
++  align-items: center;
++  gap: 12px;
++}
++
++.sub {
++  color: var(--muted);
++  font-size: 12px;
++  font-weight: 400;
++}
++
++.row {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  font-size: 14px;
++}
++
++.grow {
++  flex: 1;
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.btn {
++  border: 0;
++  border-radius: 12px;
++  padding: 8px 14px;
++  font: inherit;
++  font-size: 13px;
++  color: #fff;
++  background: rgb(255 255 255 / 0.16);
++  cursor: pointer;
++}
++
++.btn:hover {
++  background: rgb(255 255 255 / 0.26);
++}
++
++.btn.primary {
++  background: #2f7bdc;
++}
++
++.field {
++  width: 100%;
++  background: rgb(255 255 255 / 0.09);
++  border: 1px solid transparent;
++  border-radius: 10px;
++  padding: 9px 12px;
++  color: #fff;
++  font: inherit;
++  font-size: 14px;
++  outline: 0;
++}
++
++.field:focus {
++  border-color: var(--focus);
++}
++
++.field::placeholder {
++  color: var(--muted);
++}
++
++.x {
++  background: none;
++  border: 0;
++  color: var(--muted);
++  cursor: pointer;
++  font-size: 18px;
++}
++
++.x:hover {
++  color: #fff;
++}
++
++.split {
++  display: flex;
++  gap: 16px;
++  flex: 1;
++  min-height: 0;
++}
++
++.list {
++  width: 260px;
++  flex: none;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  overflow: auto;
++}
++
++.item {
++  padding: 10px 12px;
++  border-radius: 12px;
++  cursor: pointer;
++  background: rgb(255 255 255 / 0.06);
++}
++
++.item:hover {
++  background: rgb(255 255 255 / 0.12);
++}
++
++.item.on {
++  background: rgb(255 255 255 / 0.2);
++}
++
++.item .t {
++  font-size: 14px;
++  font-weight: 600;
++}
++
++.item .s {
++  color: var(--muted);
++  font-size: 12px;
++  margin-top: 2px;
++}
++
++.editor {
++  flex: 1;
++  min-width: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 10px;
++}
++
++.editor textarea {
++  flex: 1;
++  resize: none;
++  line-height: 1.5;
++}
++
++.check {
++  width: 18px;
++  height: 18px;
++  border-radius: 6px;
++  border: 1.5px solid var(--muted);
++  flex: none;
++  display: grid;
++  place-items: center;
++  font-size: 12px;
++  cursor: pointer;
++}
++
++.done .check {
++  background: var(--accent);
++  border-color: var(--accent);
++}
++
++.done .grow {
++  text-decoration: line-through;
++  color: var(--muted);
++}
++
++.dot {
++  width: 9px;
++  height: 9px;
++  border-radius: 50%;
++  flex: none;
++}
++
++.bar {
++  height: 4px;
++  border-radius: 2px;
++  background: rgb(255 255 255 / 0.18);
++  overflow: hidden;
++  margin-top: 6px;
++}
++
++.bar > i {
++  display: block;
++  height: 100%;
++  background: var(--accent);
++}
++
++.easel-wrap {
++  flex: 1;
++  min-height: 0;
++  border-radius: 14px;
++  overflow: hidden;
++  background: rgb(255 255 255 / 0.92);
++  position: relative;
++}
++
++canvas {
++  width: 100%;
++  height: 100%;
++  display: block;
++  cursor: crosshair;
++  touch-action: none;
++}
++
++.tools {
++  display: flex;
++  gap: 8px;
++  align-items: center;
++}
++
++.sw {
++  width: 22px;
++  height: 22px;
++  border-radius: 50%;
++  border: 2px solid transparent;
++  cursor: pointer;
++}
++
++.sw.on {
++  border-color: #fff;
++}
+diff --git a/chrome/browser/resources/orbit_ntp/pages.html b/chrome/browser/resources/orbit_ntp/pages.html
+new file mode 100644
+index 0000000000..07946a909f
+--- /dev/null
++++ b/chrome/browser/resources/orbit_ntp/pages.html
+@@ -0,0 +1,17 @@
++<!doctype html>
++<html lang="en">
++<head>
++  <meta charset="utf-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1">
++  <title>Orbit</title>
++  <link rel="stylesheet" href="orbit_assets.css">
++  <link rel="stylesheet" href="pages.css">
++</head>
++<body>
++  <div id="app">
++    <nav id="nav" class="glass" aria-label="Orbit"></nav>
++    <main id="view" class="glass"></main>
++  </div>
++  <script type="module" src="pages.js"></script>
++</body>
++</html>
+diff --git a/chrome/browser/resources/orbit_ntp/pages.ts b/chrome/browser/resources/orbit_ntp/pages.ts
+new file mode 100644
+index 0000000000..fbdef101e2
+--- /dev/null
++++ b/chrome/browser/resources/orbit_ntp/pages.ts
+@@ -0,0 +1,205 @@
++// @ts-nocheck
++// Copyright 2026 Songraphix. Orbit full-tab pages: Projects, Notes, Tasks, Easels.
++// Shares localStorage with the new tab page (same origin). No innerHTML.
++'use strict';
++
++const $ = (id) => document.getElementById(id);
++function el(tag, props = {}, ...kids) {
++  const n = document.createElement(tag);
++  for (const [k, v] of Object.entries(props)) {
++    if (k === 'class') n.className = v;
++    else if (k === 'style') n.style.cssText = v;
++    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
++    else n.setAttribute(k, v);
++  }
++  for (const k of kids) n.append(k);
++  return n;
++}
++function load(key, fallback) {
++  try { const v = localStorage.getItem('orbit.' + key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
++}
++function save(key, value) {
++  try { localStorage.setItem('orbit.' + key, JSON.stringify(value)); } catch {}
++}
++const uid = () => Math.random().toString(36).slice(2, 10);
++const COLORS = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#ef4444'];
++
++const SECTIONS = [
++  { id: 'projects', label: 'Projects', icon: '▤' },
++  { id: 'notes', label: 'Notes', icon: '✎' },
++  { id: 'tasks', label: 'Tasks', icon: '☑' },
++  { id: 'easels', label: 'Easels', icon: '✐' },
++];
++
++// ---- Data (shared with the new tab page) ----
++function getNotes() {
++  let notes = load('notelist', null);
++  if (!notes) {
++    const old = load('notes', '');
++    notes = old ? [{ id: uid(), title: 'Quick note', body: old, updated: Date.now() }] : [];
++    save('notelist', notes);
++  }
++  return notes;
++}
++function getProjects() {
++  const ps = load('projects', []);
++  for (const p of ps) { if (!p.id) p.id = uid(); if (!p.tasks) p.tasks = []; }
++  return ps;
++}
++
++// ---- Views ----
++function viewProjects(view) {
++  const projects = getProjects();
++  let selected = projects[0]?.id ?? null;
++  const left = el('div', { class: 'list' });
++  const right = el('div', { class: 'editor' });
++  const addP = el('input', { class: 'field', placeholder: 'New project…' });
++  const persist = () => save('projects', projects);
++  const render = () => {
++    left.replaceChildren(addP, ...projects.map((p) => {
++      const done = p.tasks.filter((t) => t.done).length;
++      return el('div', { class: 'item' + (p.id === selected ? ' on' : ''), onclick: () => { selected = p.id; render(); } },
++        el('div', { class: 'row' }, el('span', { class: 'dot', style: `background:${p.color}` }), el('span', { class: 't grow' }, p.name), el('span', { class: 'sub' }, `${done}/${p.tasks.length}`)),
++        el('div', { class: 'bar' }, el('i', { style: `width:${p.tasks.length ? (100 * done) / p.tasks.length : 0}%` })));
++    }));
++    const p = projects.find((x) => x.id === selected);
++    if (!p) { right.replaceChildren(el('div', { class: 'sub' }, 'Create a project to get started.')); return; }
++    const title = el('input', { class: 'field', value: p.name, style: 'font-size:18px;font-weight:600' });
++    title.addEventListener('input', () => { p.name = title.value; persist(); });
++    const addT = el('input', { class: 'field', placeholder: 'Add a task to this project…' });
++    addT.addEventListener('keydown', (e) => {
++      if (e.key === 'Enter' && addT.value.trim()) { p.tasks.push({ id: uid(), text: addT.value.trim(), done: false }); persist(); render(); }
++    });
++    right.replaceChildren(
++      title,
++      ...p.tasks.map((t, i) => el('div', { class: 'row' + (t.done ? ' done' : '') },
++        el('span', { class: 'check', onclick: () => { t.done = !t.done; persist(); render(); } }, t.done ? '✓' : ''),
++        el('span', { class: 'grow' }, t.text),
++        el('button', { class: 'x', title: 'Delete task', onclick: () => { p.tasks.splice(i, 1); persist(); render(); } }, '×'))),
++      addT,
++      el('button', { class: 'btn', style: 'align-self:flex-start;margin-top:12px', onclick: () => { projects.splice(projects.indexOf(p), 1); selected = projects[0]?.id ?? null; persist(); render(); } }, 'Delete project'));
++  };
++  addP.addEventListener('keydown', (e) => {
++    if (e.key === 'Enter' && addP.value.trim()) {
++      const p = { id: uid(), name: addP.value.trim(), color: COLORS[projects.length % COLORS.length], tasks: [] };
++      projects.push(p); selected = p.id; persist(); render();
++    }
++  });
++  view.append(el('h2', {}, 'Projects'), el('div', { class: 'split' }, left, right));
++  render();
++}
++
++function viewNotes(view) {
++  const notes = getNotes();
++  let selected = notes[0]?.id ?? null;
++  let query = '';
++  const left = el('div', { class: 'list' });
++  const right = el('div', { class: 'editor' });
++  const search = el('input', { class: 'field', placeholder: 'Search notes' });
++  const persist = () => save('notelist', notes);
++  const renderList = () => {
++    const shown = notes.filter((n) => (n.title + ' ' + n.body).toLowerCase().includes(query)).sort((a, b) => b.updated - a.updated);
++    left.replaceChildren(el('div', { class: 'row' }, search, el('button', { class: 'btn primary', onclick: newNote }, '+')),
++      ...shown.map((n) => el('div', { class: 'item' + (n.id === selected ? ' on' : ''), onclick: () => { selected = n.id; renderList(); renderEditor(); } },
++        el('div', { class: 't' }, n.title || 'Untitled'), el('div', { class: 's' }, new Date(n.updated).toLocaleString()))));
++  };
++  const renderEditor = () => {
++    const n = notes.find((x) => x.id === selected);
++    if (!n) { right.replaceChildren(el('div', { class: 'sub' }, 'No note selected.')); return; }
++    const title = el('input', { class: 'field', value: n.title, placeholder: 'Title', style: 'font-size:18px;font-weight:600' });
++    const body = el('textarea', { class: 'field', placeholder: 'Start writing…' });
++    body.value = n.body;
++    const touch = () => { n.title = title.value; n.body = body.value; n.updated = Date.now(); persist(); renderList(); };
++    title.addEventListener('input', touch); body.addEventListener('input', touch);
++    right.replaceChildren(title, body, el('button', { class: 'btn', style: 'align-self:flex-start', onclick: () => { notes.splice(notes.indexOf(n), 1); selected = notes[0]?.id ?? null; persist(); renderList(); renderEditor(); } }, 'Delete note'));
++  };
++  function newNote() { const n = { id: uid(), title: '', body: '', updated: Date.now() }; notes.unshift(n); selected = n.id; persist(); renderList(); renderEditor(); }
++  search.addEventListener('input', () => { query = search.value.toLowerCase(); renderList(); });
++  view.append(el('h2', {}, 'Notes'), el('div', { class: 'split' }, left, right));
++  renderList(); renderEditor();
++}
++
++function viewTasks(view) {
++  const tasks = load('tasks', []);
++  const list = el('div', { style: 'display:flex;flex-direction:column;gap:10px' });
++  const sub = el('span', { class: 'sub' });
++  const persist = () => save('tasks', tasks);
++  const render = () => {
++    sub.textContent = `${tasks.filter((t) => !t.done).length} remaining`;
++    list.replaceChildren(...tasks.map((t, i) => el('div', { class: 'row' + (t.done ? ' done' : '') },
++      el('span', { class: 'check', onclick: () => { t.done = !t.done; persist(); render(); } }, t.done ? '✓' : ''),
++      el('span', { class: 'grow' }, t.text),
++      el('button', { class: 'x', title: 'Delete', onclick: () => { tasks.splice(i, 1); persist(); render(); } }, '×'))));
++  };
++  const add = el('input', { class: 'field', placeholder: 'Add a task for today' });
++  add.addEventListener('keydown', (e) => { if (e.key === 'Enter' && add.value.trim()) { tasks.push({ text: add.value.trim(), done: false }); add.value = ''; persist(); render(); } });
++  const clear = el('button', { class: 'btn', style: 'align-self:flex-start', onclick: () => { for (let i = tasks.length - 1; i >= 0; i--) if (tasks[i].done) tasks.splice(i, 1); persist(); render(); } }, 'Clear completed');
++  view.append(el('h2', {}, 'Tasks', sub), add, list, clear);
++  render();
++}
++
++function viewEasels(view) {
++  const easels = load('easels', []);
++  let selected = easels[0]?.id ?? null;
++  let color = '#0f1b24', size = 3;
++  const left = el('div', { class: 'list' });
++  const right = el('div', { class: 'editor' });
++  const persist = () => save('easels', easels);
++  const renderList = () => {
++    left.replaceChildren(el('button', { class: 'btn primary', onclick: () => { const e = { id: uid(), name: 'Easel ' + (easels.length + 1), strokes: [] }; easels.unshift(e); selected = e.id; persist(); renderList(); renderBoard(); } }, '+ New easel'),
++      ...easels.map((e) => el('div', { class: 'item' + (e.id === selected ? ' on' : ''), onclick: () => { selected = e.id; renderList(); renderBoard(); } }, el('div', { class: 't' }, e.name), el('div', { class: 's' }, `${e.strokes.length} strokes`))));
++  };
++  const renderBoard = () => {
++    const e = easels.find((x) => x.id === selected);
++    if (!e) { right.replaceChildren(el('div', { class: 'sub' }, 'Create an easel to start drawing.')); return; }
++    const name = el('input', { class: 'field', value: e.name, style: 'font-size:18px;font-weight:600' });
++    name.addEventListener('input', () => { e.name = name.value; persist(); renderList(); });
++    const canvas = el('canvas');
++    const wrap = el('div', { class: 'easel-wrap' }, canvas);
++    const tools = el('div', { class: 'tools' },
++      ...['#0f1b24', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'].map((c) => el('span', { class: 'sw' + (c === color ? ' on' : ''), style: `background:${c}`, onclick: (ev) => { color = c; tools.querySelectorAll('.sw').forEach((s) => s.classList.remove('on')); ev.target.classList.add('on'); } })),
++      el('button', { class: 'btn', onclick: () => { size = size === 3 ? 8 : 3; } }, 'Brush size'),
++      el('button', { class: 'btn', onclick: () => { e.strokes.pop(); persist(); draw(); renderList(); } }, 'Undo'),
++      el('button', { class: 'btn', onclick: () => { e.strokes.length = 0; persist(); draw(); renderList(); } }, 'Clear'),
++      el('button', { class: 'btn', onclick: () => { easels.splice(easels.indexOf(e), 1); selected = easels[0]?.id ?? null; persist(); renderList(); renderBoard(); } }, 'Delete'));
++    right.replaceChildren(name, tools, wrap);
++    const ctx = canvas.getContext('2d');
++    // Strokes are stored in 0..1 coordinates so they survive resizing.
++    function draw() {
++      const w = wrap.clientWidth, h = wrap.clientHeight;
++      canvas.width = w; canvas.height = h;
++      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
++      for (const s of e.strokes) {
++        ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.beginPath();
++        s.p.forEach(([x, y], i) => (i ? ctx.lineTo(x * w, y * h) : ctx.moveTo(x * w, y * h)));
++        if (s.p.length === 1) ctx.lineTo(s.p[0][0] * w + 0.1, s.p[0][1] * h);
++        ctx.stroke();
++      }
++    }
++    let cur = null;
++    const pt = (ev) => { const r = canvas.getBoundingClientRect(); return [(ev.clientX - r.left) / r.width, (ev.clientY - r.top) / r.height]; };
++    canvas.addEventListener('pointerdown', (ev) => { canvas.setPointerCapture(ev.pointerId); cur = { c: color, w: size, p: [pt(ev)] }; e.strokes.push(cur); draw(); });
++    canvas.addEventListener('pointermove', (ev) => { if (cur) { cur.p.push(pt(ev)); draw(); } });
++    const end = () => { if (cur) { cur = null; persist(); renderList(); } };
++    canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
++    requestAnimationFrame(draw);
++    new ResizeObserver(draw).observe(wrap);
++  };
++  view.append(el('h2', {}, 'Easels'), el('div', { class: 'split' }, left, right));
++  renderList(); renderBoard();
++}
++
++const VIEWS = { projects: viewProjects, notes: viewNotes, tasks: viewTasks, easels: viewEasels };
++
++function route() {
++  const id = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'projects';
++  const sec = SECTIONS.find((s) => s.id === id);
++  document.title = `${sec.label} - Orbit`;
++  $('nav').replaceChildren(el('h1', {}, 'Orbit'), ...SECTIONS.map((s) => el('a', { href: '#' + s.id, class: s.id === id ? 'on' : '' }, el('span', {}, s.icon), s.label)),
++    el('a', { href: 'chrome://orbit-newtab/', style: 'margin-top:auto' }, el('span', {}, '⌂'), 'Home'));
++  const view = $('view');
++  view.replaceChildren();
++  VIEWS[id](view);
++}
++window.addEventListener('hashchange', route);
++route();
+-- 
+2.54.0 (Apple Git-157)
+

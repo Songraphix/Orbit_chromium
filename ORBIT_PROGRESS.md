@@ -42,3 +42,10 @@
 - Gotchas: script must be <script type=module> (tsc adds export{}); stylelint formatting is enforced at build (fixed with stylelint --fix); search.cc unreachable-code warning is an error.
 - Verified by screenshot: matches Orbit design. Dock overlaps widgets in small windows.
 - Mistake to note: a CDP debug script briefly attached to another browser on port 9333 and reloaded one Google tab there. Use --remote-debugging-port=0 + DevToolsActivePort.
+
+## Phase 4 — Full-tab pages: done
+- One pages app (not one commit per page, deviation from the plan to save build cycles): chrome://orbit-newtab/pages.html#projects|notes|tasks|easels. Same origin as the new tab page so localStorage is shared. Files: pages.html/css/ts in chrome/browser/resources/orbit_ntp.
+- Projects (own task lists + progress), Notes (list, search, editor), Tasks (clear completed), Easels (freehand canvas, strokes stored normalised, undo/clear). New tab page: dock nav tiles to these pages; Projects widget shows task progress; Notes widget edits the newest note.
+- Tested through CDP on a private instance (--remote-debugging-port=0): all four views + cross-page data. Screenshot checked for Projects only; Notes/Tasks/Easels were verified by script, not visually.
+- Not ported: Orbit's Archive, Library, assistant, boosts, clipboard, focus sounds, toolkit pages (need backends).
+- Next: Phase 5 (sidebar/rail/toolbar), stage 1: vertical sidebar hosted as WebUI in the browser frame.

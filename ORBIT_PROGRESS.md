@@ -33,3 +33,12 @@
 - ui/color/ref_color_mixer.cc: AddRefColorMixer now generates the default ref palette from Orbit seed #2f6b70 (TonalSpot) instead of the stock blue baseline; grayscale (incognito) keeps baseline; user-chosen theme colours still win. Retints frame/toolbar/tabs/omnibox/WebUI, light+dark, via the palette, no per-view hard-coding.
 - Verified visually in dark mode (teal-tinted frame). Light mode not checked. Orbit's exact hexes (night #0c1f26 etc.) are approximated by the generated tones, not exact.
 - Commit on my-browser.
+
+## Phase 3 — New tab page: done
+- New WebUI chrome://orbit-newtab: chrome/browser/resources/orbit_ntp/ (html, css, ts-as-js, orbit_assets.css with wallpaper+Comfortaa embedded as data: URIs because build_webui only takes text files) and chrome/browser/ui/webui/orbit_ntp/ (controller + config). CSP overridden to allow data: for img/font.
+- Wired: resource_ids.spec (5430), chrome_paks.gni, resources/BUILD.gn, webui/BUILD.gn, chrome_web_ui_configs.cc, webui_url_constants.h, search.cc (every new tab -> orbit-newtab regardless of search engine, desktop only).
+- Rewritten in vanilla JS (no React, no Electron APIs, Trusted-Types safe). Widgets: Projects, Palette, Notes, Your Focus timer, Today tasks, Quote. Clock/date/greeting, search box, shortcut dock. State in localStorage.
+- Electron/Node replacements: window.orbit.* data (weather, Drive, AI "Ask Orbit", voice mic, wallpaper picker, real Spaces/apps) NOT ported: no backend yet. Search uses Google URL directly (not the user's default search engine).
+- Gotchas: script must be <script type=module> (tsc adds export{}); stylelint formatting is enforced at build (fixed with stylelint --fix); search.cc unreachable-code warning is an error.
+- Verified by screenshot: matches Orbit design. Dock overlaps widgets in small windows.
+- Mistake to note: a CDP debug script briefly attached to another browser on port 9333 and reloaded one Google tab there. Use --remote-debugging-port=0 + DevToolsActivePort.
